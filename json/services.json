@@ -1,0 +1,68 @@
+[
+  {
+    "id": "d1d073b2-d759-4b9e-b787-5cd8cd9ef04d",
+    "name": "MongoDB",
+    "command": "mongod --dbpath D:\\software\\commonBag\\MongoDB\\mongodb-win32-x86_64-windows-5.0.17\\data\\db",
+    "path": "D:\\software\\commonBag\\MongoDB\\mongodb-win32-x86_64-windows-5.0.17\\bin",
+    "startup_type": "auto",
+    "sort_index": 2,
+    "env_vars": {},
+    "log_path": "",
+    "category": "basic"
+  },
+  {
+    "id": "f3619eb3-5224-4abf-a071-e2d1e12c42f7",
+    "name": "Redis",
+    "command": "redis-server.exe",
+    "path": "D:\\software\\commonBag\\redis",
+    "startup_type": "auto",
+    "sort_index": 0,
+    "env_vars": {},
+    "log_path": "",
+    "category": "basic"
+  },
+  {
+    "id": "a4b8e0c2-d5b1-467e-a93d-9be208e39120",
+    "name": "周宁-电梯-event-agent",
+    "command": "java -jar event-agent-2023.07.09.jar",
+    "path": "D:\\work\\SVNProject\\宁德周宁-市场监督局\\code\\elevator\\code\\agent\\event-agent\\target",
+    "startup_type": "auto",
+    "sort_index": 3,
+    "env_vars": {},
+    "log_path": "",
+    "category": "project"
+  },
+  {
+    "id": "77412c89-a3a3-4d93-bce0-15a85eb25024",
+    "name": "frontend",
+    "command": "npm run dev",
+    "path": "D:\\work\\GitProject\\craft\\frontend",
+    "startup_type": "auto",
+    "sort_index": 5,
+    "env_vars": {},
+    "log_path": "",
+    "category": "project"
+  },
+  {
+    "id": "f17c80ae-ad49-421d-b924-4235dcf31f7a",
+    "name": "tomcat-9.0.73",
+    "command": "catalina.bat run",
+    "path": "D:\\software\\tomcat\\apache-tomcat-9.0.73\\bin",
+    "startup_type": "auto",
+    "sort_index": 4,
+    "env_vars": {},
+    "log_path": "D:\\software\\tomcat\\apache-tomcat-9.0.73\\logs",
+    "category": "project"
+  },
+  {
+    "id": "e865ba80-88f2-4ab6-8506-e44b90083890",
+    "name": "Activemq",
+    "command": "activemq.bat",
+    "path": "D:\\software\\commonBag\\apache-activemq-5.15.13\\bin\\win64",
+    "startup_type": "auto",
+    "sort_index": 1,
+    "env_vars": {},
+    "log_path": "D:\\software\\commonBag\\apache-activemq-5.15.13\\data",
+    "category": "basic"
+  }
+]
