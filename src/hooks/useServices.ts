@@ -24,12 +24,9 @@ export function useServices() {
     command: string;
     path: string;
     serviceType: string;
-    envVars: Record<string, string>;
     logPath: string;
-    dependsOn: string[];
-    healthCheckUrl?: string;
   }) => {
-    await invoke("add_service", params);
+    await invoke("add_service", { ...params, envVars: {} });
     await loadServices();
   }, [loadServices]);
 
@@ -39,12 +36,9 @@ export function useServices() {
     command: string;
     path: string;
     serviceType: string;
-    envVars: Record<string, string>;
     logPath: string;
-    dependsOn: string[];
-    healthCheckUrl?: string;
   }) => {
-    await invoke("update_service", params);
+    await invoke("update_service", { ...params, envVars: {} });
     await loadServices();
   }, [loadServices]);
 

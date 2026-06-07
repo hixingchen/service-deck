@@ -4,25 +4,17 @@ import type { Project } from "../types";
 
 interface ProjectGroupsProps {
   projects: Project[];
-  runningServices: string[];
   children: (project: Project) => ReactNode;
 }
 
 export function ProjectGroups({
   projects,
-  runningServices,
   children,
 }: ProjectGroupsProps) {
   // 收藏项目
   const favorites = useMemo(() => projects.filter(p => p.favorite), [projects]);
   // 其他项目
   const others = useMemo(() => projects.filter(p => !p.favorite), [projects]);
-
-  const getRunningCount = (projectList: Project[]) => {
-    return projectList.filter(p =>
-      p.services.some(s => runningServices.includes(s.name))
-    ).length;
-  };
 
   return (
     <div className="space-y-4">

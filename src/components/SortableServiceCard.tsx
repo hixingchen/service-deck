@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Play, Square, Trash2, Edit3, FolderOpen, ScrollText, Star, RotateCw } from "lucide-react";
+import { GripVertical, Play, Square, Trash2, Edit3, FolderOpen, ScrollText, Star, RotateCw, Terminal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Service } from "../types";
 import { ServiceStatusDot } from "./ServiceStatusDot";
 import { ServiceTypeBadge } from "./ServiceTypeBadge";
 import { ActionButton } from "./ActionButton";
+import { CommandTerminal } from "./CommandTerminal";
 
 interface SortableServiceCardProps {
   service: Service;
@@ -36,25 +37,12 @@ export function SortableServiceCard({
   onConfirmDelete,
 }: SortableServiceCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: service.id });
-  const [loading, setLoading] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? "none" : transition,
     zIndex: isDragging ? 50 : "auto" as const,
-  };
-
-  const handleToggle = async () => {
-    setLoading(true);
-    try {
-      if (running) {
-        await onStop();
-      } else {
-        await onStart();
-      }
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleOpenDirectory = async () => {
@@ -113,11 +101,6 @@ export function SortableServiceCard({
               {projectCount} 个项目
             </span>
           )}
-          {service.depends_on && service.depends_on.length > 0 && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400">
-              依赖 {service.depends_on.length}
-            </span>
-          )}
         </div>
         <div className="text-[11px] text-gray-600 truncate mt-0.5 font-mono">
           {service.command}
@@ -143,20 +126,25 @@ export function SortableServiceCard({
           onClick={onViewLogs}
           title="查看日志"
         />
+        {(service.service_type === "npm" || service.service_type === "maven") && (
+          <ActionButton
+            icon={<Terminal className="w-3.5 h-3.5" />}
+            onClick={() => setShowTerminal(true)}
+            title="命令终端"
+          />
+        )}
         {running ? (
           <>
             <ActionButton
               icon={<RotateCw className="w-3.5 h-3.5" />}
               onClick={onRestart}
               title="重启"
-              disabled={loading}
             />
             <ActionButton
               icon={<Square className="w-3.5 h-3.5" />}
               onClick={onStop}
               title="停止"
               variant="danger"
-              disabled={loading}
             />
           </>
         ) : (
@@ -165,7 +153,6 @@ export function SortableServiceCard({
             onClick={onStart}
             title="启动"
             variant="success"
-            disabled={loading}
           />
         )}
         <ActionButton
@@ -180,6 +167,16 @@ export function SortableServiceCard({
           variant="danger"
         />
       </div>
+
+      {/* 命令终端弹窗 */}
+      {showTerminal && (
+        <CommandTerminal
+          serviceName={service.name}
+          servicePath={service.path}
+          serviceType={service.service_type || "normal"}
+          onClose={() => setShowTerminal(false)}
+        />
+      )}
     </div>
   );
 }

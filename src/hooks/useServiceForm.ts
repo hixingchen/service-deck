@@ -10,18 +10,14 @@ export function useServiceForm() {
   const [serviceCommand, setServiceCommand] = useState("");
   const [servicePath, setServicePath] = useState("");
   const [serviceType, setServiceType] = useState("normal");
-  const [serviceEnvVars, setServiceEnvVars] = useState<Record<string, string>>({});
   const [serviceLogPath, setServiceLogPath] = useState("");
-  const [serviceDependsOn, setServiceDependsOn] = useState<string[]>([]);
 
   const resetForm = useCallback(() => {
     setServiceName("");
     setServiceCommand("");
     setServicePath("");
     setServiceType("normal");
-    setServiceEnvVars({});
     setServiceLogPath("");
-    setServiceDependsOn([]);
   }, []);
 
   const openAddForm = useCallback(() => {
@@ -34,9 +30,7 @@ export function useServiceForm() {
     setServiceCommand(service.command);
     setServicePath(service.path);
     setServiceType(service.service_type || "normal");
-    setServiceEnvVars(service.env_vars || {});
     setServiceLogPath(service.log_path || "");
-    setServiceDependsOn(service.depends_on || []);
     setEditingService(service);
   }, []);
 
@@ -54,17 +48,13 @@ export function useServiceForm() {
     serviceCommand,
     servicePath,
     serviceType,
-    serviceEnvVars,
     serviceLogPath,
-    serviceDependsOn,
     // setter
     setServiceName,
     setServiceCommand,
     setServicePath,
     setServiceType,
-    setServiceEnvVars,
     setServiceLogPath,
-    setServiceDependsOn,
     // 操作
     resetForm,
     openAddForm,

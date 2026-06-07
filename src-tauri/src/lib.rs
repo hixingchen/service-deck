@@ -1,34 +1,19 @@
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Child, Stdio};
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::sync::{Arc, Mutex};
+use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::thread;
-use tauri::{State, AppHandle, Manager};
-
-// 过滤 ANSI 转义码（颜色、样式等）
-fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // 跳过 ESC[ ... m 序列
-            if chars.next() == Some('[') {
-                for cc in chars.by_ref() {
-                    if cc == 'm' { break; }
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
+use tauri::{State, AppHandle, Emitter};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+// Windows 隐藏窗口标志
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -85,6 +70,15 @@ pub struct AppSettings {
     pub show_notifications: bool,     // 是否显示通知
     #[serde(default)]
     pub theme: String,                // 主题设置
+    // 环境配置（类似 IDEA）
+    #[serde(default)]
+    pub java_home: String,            // JDK 路径，如 D:\software\commonBag\jdk\jdk8
+    #[serde(default)]
+    pub maven_home: String,           // Maven 路径，如 D:\software\commonBag\apache-maven-3.8.6
+    #[serde(default)]
+    pub maven_settings: String,       // Maven settings.xml 路径
+    #[serde(default)]
+    pub maven_local_repo: String,     // Maven 本地仓库路径
 }
 
 struct AppState {
@@ -93,6 +87,8 @@ struct AppState {
     processes: Mutex<HashMap<String, Child>>,
     detected_pids: Mutex<HashMap<String, u32>>,  // 启动时检测到的运行中服务 PID
     settings: Mutex<AppSettings>,
+    log_buffers: Arc<Mutex<HashMap<String, Vec<String>>>>,  // 服务日志缓冲区
+    log_viewers_active: Arc<Mutex<HashMap<String, bool>>>,  // 哪些服务的日志界面是打开的
 }
 
 fn get_exe_dir(_app: &AppHandle) -> PathBuf {
@@ -102,12 +98,6 @@ fn get_exe_dir(_app: &AppHandle) -> PathBuf {
 
 fn get_config_path(app: &AppHandle) -> PathBuf {
     get_exe_dir(app).join("config.json")
-}
-
-fn get_log_dir(app: &AppHandle) -> PathBuf {
-    let dir = get_exe_dir(app).join("logs");
-    fs::create_dir_all(&dir).ok();
-    dir
 }
 
 // 统一配置结构
@@ -307,6 +297,7 @@ fn delete_service(app: AppHandle, state: State<AppState>, id: String) -> Result<
     // 停止该服务的进程
     if let Some(mut process) = processes.remove(&service.name) {
         let _ = process.kill();
+        let _ = process.wait();
     }
 
     // 从所有项目中移除该服务
@@ -380,6 +371,7 @@ fn remove_project(app: AppHandle, state: State<AppState>, id: String) -> Result<
         for service in &project.services {
             if let Some(mut process) = processes.remove(&service.name) {
                 let _ = process.kill();
+                let _ = process.wait();
             }
         }
     }
@@ -469,6 +461,7 @@ fn remove_service_from_project(app: AppHandle, state: State<AppState>, project_i
         let service_name = service.name.clone();
         if let Some(mut process) = processes.remove(&service_name) {
             let _ = process.kill();
+            let _ = process.wait();
         }
     }
 
@@ -479,58 +472,203 @@ fn remove_service_from_project(app: AppHandle, state: State<AppState>, project_i
     Ok(())
 }
 
-fn spawn_with_realtime_log(app: &AppHandle, service: &Service, service_name: &str) -> Result<Child, String> {
-    let log_path = if service.log_path.is_empty() {
-        let log_dir = get_log_dir(app);
-        let safe_name = service_name.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-        log_dir.join(format!("{}.log", safe_name))
+// 智能转换 Maven 命令
+fn smart_convert_maven_command(command: &str, work_dir: &str) -> String {
+    // 检测是否是 spring-boot:run 命令
+    if !command.contains("spring-boot:run") {
+        eprintln!("[smart_convert] 非 spring-boot:run 命令，原样返回: {}", command);
+        return command.to_string();
+    }
+
+    eprintln!("[smart_convert] 输入命令: {}, 工作目录: {}", command, work_dir);
+
+    let path = PathBuf::from(work_dir);
+
+    // 解析 -pl 参数获取模块名
+    let module_name = if command.contains("-pl") {
+        command.split("-pl").nth(1)
+            .and_then(|s| s.split_whitespace().next())
+            .unwrap_or("")
     } else {
-        PathBuf::from(&service.log_path)
+        ""
     };
 
-    // Windows 隐藏窗口标志
-    #[cfg(windows)]
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    eprintln!("[smart_convert] 解析模块名: '{}'", module_name);
 
-    // Windows 自动切换 UTF-8 编码，解决中文乱码
-    #[cfg(windows)]
-    let full_command = format!("chcp 65001 >nul && {}", service.command);
-    #[cfg(not(windows))]
-    let full_command = service.command.clone();
+    // 查找 war 或 jar 文件
+    let target_dir = if !module_name.is_empty() {
+        path.join(module_name).join("target")
+    } else {
+        path.join("target")
+    };
 
-    // 如果用户指定了日志路径，直接重定向到文件（用户自己看文件）
+    eprintln!("[smart_convert] target 目录: {:?}, 存在: {}", target_dir, target_dir.exists());
+
+    // 列出 target 目录内容
+    if target_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&target_dir) {
+            eprintln!("[smart_convert] target 目录内容:");
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_file = entry.path().is_file();
+                eprintln!("[smart_convert]   {} (file={})", name, is_file);
+            }
+        }
+    }
+
+    // 查找 war 或 jar 文件的函数（排除 .original 文件）
+    let find_jar_file = |dir: &PathBuf| -> Option<PathBuf> {
+        if let Ok(entries) = fs::read_dir(dir) {
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let path = entry.path();
+                // 排除 .original 文件和非文件
+                if !path.is_file() {
+                    continue;
+                }
+                if name.ends_with(".original") {
+                    continue;
+                }
+                if name.ends_with(".war") || name.ends_with(".jar") {
+                    eprintln!("[smart_convert] 找到候选文件: {:?}", path);
+                    candidates.push(path);
+                }
+            }
+            // 优先选择 .war 文件（Spring Boot 项目通常打 war 包）
+            candidates.sort_by(|a, b| {
+                let a_name = a.file_name().unwrap_or_default().to_string_lossy();
+                let b_name = b.file_name().unwrap_or_default().to_string_lossy();
+                // .war 优先于 .jar
+                let a_is_war = a_name.ends_with(".war");
+                let b_is_war = b_name.ends_with(".war");
+                b_is_war.cmp(&a_is_war)
+            });
+            return candidates.into_iter().next();
+        }
+        None
+    };
+
+    // 如果 target 目录存在且有 war 文件，直接运行
+    if target_dir.exists() {
+        if let Some(jar_path) = find_jar_file(&target_dir) {
+            // 使用 Windows 风格路径（反斜杠）
+            let path_str = jar_path.display().to_string().replace("/", "\\");
+            let result = format!("java -jar \"{}\"", path_str);
+            eprintln!("[smart_convert] 转换结果: {}", result);
+            return result;
+        }
+        eprintln!("[smart_convert] target 目录存在但未找到 war/jar 文件");
+    } else {
+        eprintln!("[smart_convert] target 目录不存在");
+    }
+
+    // 没有 war 文件，需要先编译再运行
+    let result = if !module_name.is_empty() {
+        // 多模块项目：先编译，然后用 for 循环查找并运行
+        let target_path = target_dir.display().to_string().replace("/", "\\");
+        format!("mvn clean package -DskipTests -pl {} -am && for %f in (\"{}\\*.war\") do java -jar \"%f\"", module_name, target_path)
+    } else {
+        // 单模块项目
+        let target_path = target_dir.display().to_string().replace("/", "\\");
+        format!("mvn clean package -DskipTests && for %f in (\"{}\\*.war\") do java -jar \"%f\"", target_path)
+    };
+    eprintln!("[smart_convert] 需要先编译，转换结果: {}", result);
+    result
+}
+
+// 应用环境配置到 Command（JAVA_HOME, MAVEN_HOME 等）
+fn apply_env_settings(cmd: &mut Command, settings: &AppSettings, service_env: &HashMap<String, String>) {
+    // 继承系统环境变量
+    for (key, value) in std::env::vars() {
+        cmd.env(&key, &value);
+    }
+    // 应用服务级环境变量
+    cmd.envs(service_env);
+    // 应用全局环境配置
+    if !settings.java_home.is_empty() {
+        cmd.env("JAVA_HOME", &settings.java_home);
+        // 将 java/bin 加入 PATH
+        let java_bin = PathBuf::from(&settings.java_home).join("bin");
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{};{}", java_bin.display(), path));
+    }
+    if !settings.maven_home.is_empty() {
+        cmd.env("MAVEN_HOME", &settings.maven_home);
+        // 将 maven/bin 加入 PATH
+        let maven_bin = PathBuf::from(&settings.maven_home).join("bin");
+        let path = cmd.get_envs()
+            .find(|(k, _)| k.to_str() == Some("PATH"))
+            .and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()))
+            .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
+        cmd.env("PATH", format!("{};{}", maven_bin.display(), path));
+    }
+}
+
+// 给 Maven 命令追加 settings 和 local-repo 参数（暂未启用，避免兼容性问题）
+fn enhance_maven_command(command: &str, _settings: &AppSettings) -> String {
+    command.to_string()
+}
+
+fn spawn_with_realtime_log(_app: &AppHandle, service: &Service, service_name: &str, state: &State<AppState>) -> Result<Child, String> {
+    // 读取环境配置
+    let settings = state.settings.lock().unwrap().clone();
+
+    // 智能转换 Maven 命令
+    let smart_command = smart_convert_maven_command(&service.command, &service.path);
+    // 给 Maven 命令追加 settings 和 local-repo 参数
+    let smart_command = enhance_maven_command(&smart_command, &settings);
+    eprintln!("[spawn] 服务: {}, 原始命令: {}, 转换后: {}, 工作目录: {}", service_name, service.command, smart_command, service.path);
+
+    // 如果用户指定了日志路径，直接重定向到文件
     if !service.log_path.is_empty() {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", &full_command])
-            .current_dir(&service.path)
-            .envs(&service.env_vars);
+        let mut cmd = build_command(&smart_command, &service.path, &settings, &service.env_vars);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
         return cmd.spawn().map_err(|e| format!("启动失败: {}", e));
     }
 
-    // 否则用 pipe 实时捕获，后台线程写入日志文件
-    let mut cmd = Command::new("cmd");
-    cmd.args(["/C", &full_command])
-        .current_dir(&service.path)
-        .envs(&service.env_vars)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    // 否则用 pipe 实时捕获，存储到内存
+    let mut cmd = build_command(&smart_command, &service.path, &settings, &service.env_vars);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
 
+    // 初始化服务的日志缓冲区
+    {
+        let mut buffers = state.log_buffers.lock().unwrap();
+        buffers.insert(service_name.to_string(), Vec::new());
+    }
+
+    // 克隆 Arc 引用以便在后台线程中使用
+    let log_buffers = state.log_buffers.clone();
+    let log_viewers_active = state.log_viewers_active.clone();
+
     // 后台线程读取 stdout
     if let Some(stdout) = child.stdout.take() {
-        let log_path = log_path.clone();
+        let service_name = service_name.to_string();
+        let log_buffers = log_buffers.clone();
+        let log_viewers_active = log_viewers_active.clone();
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        let _ = writeln!(file, "{}", strip_ansi(&line));
-                        let _ = file.flush();
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let mut buffers = log_buffers.lock().unwrap();
+                    let buffer = buffers.entry(service_name.clone()).or_insert_with(Vec::new);
+                    buffer.push(line);
+
+                    // 检查日志界面是否打开
+                    let viewers = log_viewers_active.lock().unwrap();
+                    let is_active = viewers.get(&service_name).copied().unwrap_or(false);
+                    drop(viewers);
+
+                    // 日志缓冲区大小限制：界面关闭时保留5行，界面打开时最多10000行
+                    let max_lines = if is_active { 10000 } else { 5 };
+                    if buffer.len() > max_lines {
+                        let drain_count = buffer.len() - max_lines;
+                        buffer.drain(0..drain_count);
                     }
                 }
             }
@@ -539,14 +677,27 @@ fn spawn_with_realtime_log(app: &AppHandle, service: &Service, service_name: &st
 
     // 后台线程读取 stderr
     if let Some(stderr) = child.stderr.take() {
-        let log_path = log_path.clone();
+        let service_name = service_name.to_string();
+        let log_buffers = log_buffers.clone();
+        let log_viewers_active = log_viewers_active.clone();
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        let _ = writeln!(file, "{}", strip_ansi(&line));
-                        let _ = file.flush();
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let mut buffers = log_buffers.lock().unwrap();
+                    let buffer = buffers.entry(service_name.clone()).or_insert_with(Vec::new);
+                    buffer.push(line);
+
+                    // 检查日志界面是否打开
+                    let viewers = log_viewers_active.lock().unwrap();
+                    let is_active = viewers.get(&service_name).copied().unwrap_or(false);
+                    drop(viewers);
+
+                    // 日志缓冲区大小限制：界面关闭时保留5行，界面打开时最多10000行
+                    let max_lines = if is_active { 10000 } else { 5 };
+                    if buffer.len() > max_lines {
+                        let drain_count = buffer.len() - max_lines;
+                        buffer.drain(0..drain_count);
                     }
                 }
             }
@@ -588,6 +739,41 @@ fn resolve_dependency_order(services: &HashMap<String, Service>, target_ids: &[S
     order
 }
 
+// 构建 Command 对象，处理中文路径编码问题
+// java -jar "中文路径" 直接运行 java 进程，不走 cmd /C（避免路径乱码）
+fn build_command(smart_cmd: &str, work_dir: &str, settings: &AppSettings, env_vars: &HashMap<String, String>) -> Command {
+    // 检测是否是 java -jar 命令
+    if smart_cmd.starts_with("java -jar ") {
+        let jar_path = smart_cmd["java -jar ".len()..].trim().trim_matches('"');
+        let java_exe = if !settings.java_home.is_empty() {
+            format!("{}\\bin\\java.exe", settings.java_home)
+        } else {
+            "java".to_string()
+        };
+        let mut cmd = Command::new(&java_exe);
+        cmd.arg("-jar").arg(jar_path);
+        cmd.current_dir(work_dir);
+        // 继承环境变量
+        for (k, v) in std::env::vars() { cmd.env(&k, &v); }
+        cmd.envs(env_vars);
+        if !settings.java_home.is_empty() {
+            cmd.env("JAVA_HOME", &settings.java_home);
+        }
+        cmd
+    } else {
+        // 非 java -jar 命令，走 cmd /C
+        #[cfg(windows)]
+        let full = format!("chcp 65001 >nul && {} 2>&1", smart_cmd);
+        #[cfg(not(windows))]
+        let full = format!("{} 2>&1", smart_cmd);
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", &full]);
+        cmd.current_dir(work_dir);
+        apply_env_settings(&mut cmd, settings, env_vars);
+        cmd
+    }
+}
+
 #[tauri::command]
 fn start_service(app: AppHandle, state: State<AppState>, service_name: String, command: Option<String>) -> Result<(), String> {
     let services = state.services.lock().unwrap();
@@ -625,7 +811,45 @@ fn start_service(app: AppHandle, state: State<AppState>, service_name: String, c
         service.clone()
     };
 
-    let child = spawn_with_realtime_log(&app, &actual_service, &service_name)?;
+    // 释放所有锁，避免同步测试期间阻塞
+    drop(detected_pids);
+    drop(processes);
+    drop(services);
+
+    // 智能转换命令
+    let smart_cmd = smart_convert_maven_command(&actual_service.command, &actual_service.path);
+    eprintln!("[start_service] 原始: {} → 转换: {} → 路径: {}", actual_service.command, smart_cmd, actual_service.path);
+
+    // 直接用同步方式执行，捕获完整输出
+    let settings = state.settings.lock().unwrap().clone();
+    let mut test_cmd = build_command(&smart_cmd, &actual_service.path, &settings, &actual_service.env_vars);
+
+    let test_handle = std::thread::spawn(move || test_cmd.output());
+
+    // 最多等 10 秒
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut test_result = None;
+    while std::time::Instant::now() < deadline {
+        if test_handle.is_finished() {
+            test_result = Some(test_handle.join().unwrap());
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    if let Some(Ok(output)) = test_result {
+        let code = output.status.code().unwrap_or(-1);
+        let all_output = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        eprintln!("[start_service] 退出码: {}, 输出: {}", code, all_output);
+        if !output.status.success() {
+            return Err(format!("启动失败（退出码: {}）\n命令: {}\n\n{}", code, smart_cmd, all_output));
+        }
+    }
+
+    // 超时 = 进程在运行 = 启动成功，用异步方式继续
+    let child = spawn_with_realtime_log(&app, &actual_service, &service_name, &state)?;
+    eprintln!("[start_service] 服务 {} 启动成功 (PID: {})", service_name, child.id());
+    let mut processes = state.processes.lock().unwrap();
     processes.insert(service_name, child);
     Ok(())
 }
@@ -674,7 +898,7 @@ fn start_project(app: AppHandle, state: State<AppState>, project_id: String) -> 
             continue;
         }
 
-        match spawn_with_realtime_log(&app, global_svc, &global_svc.name) {
+        match spawn_with_realtime_log(&app, global_svc, &global_svc.name, &state) {
             Ok(child) => {
                 processes.insert(global_svc.name.clone(), child);
                 started.push(global_svc.name.clone());
@@ -714,7 +938,7 @@ fn batch_start_services(app: AppHandle, state: State<AppState>, service_names: V
             }
         };
 
-        match spawn_with_realtime_log(&app, service, service_name) {
+        match spawn_with_realtime_log(&app, service, service_name, &state) {
             Ok(child) => {
                 processes.insert(service_name.clone(), child);
                 started.push(service_name.clone());
@@ -749,73 +973,82 @@ fn batch_stop_services(state: State<AppState>, service_names: Vec<String>) -> Re
     Ok(stopped)
 }
 
-// 解析日志文件路径
-fn resolve_log_path(path: &PathBuf) -> PathBuf {
-    path.clone()
-}
-
 #[tauri::command]
-fn get_service_logs(app: AppHandle, state: State<AppState>, service_name: String, tail_lines: Option<usize>, offset: Option<usize>) -> Result<String, String> {
+fn get_service_logs(_app: AppHandle, state: State<AppState>, service_name: String, tail_lines: Option<usize>) -> Result<String, String> {
     let services = state.services.lock().unwrap();
 
     let service = services.values().find(|s| s.name == service_name).ok_or("服务不存在")?;
 
-    let log_file_path = if service.log_path.is_empty() {
-        let log_dir = get_log_dir(&app);
-        let safe_name = service_name.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-        log_dir.join(format!("{}.log", safe_name))
-    } else {
-        resolve_log_path(&PathBuf::from(&service.log_path))
-    };
-
-    if !log_file_path.exists() {
-        return Ok(String::new());
-    }
-
-    // offset模式：从指定字节位置读取，用于轮询追加
-    if let Some(byte_offset) = offset {
-        let metadata = fs::metadata(&log_file_path).map_err(|e| format!("读取元数据失败: {}", e))?;
-        let file_size = metadata.len() as usize;
-        if byte_offset >= file_size {
+    // 如果用户指定了日志路径，从文件读取
+    if !service.log_path.is_empty() {
+        let log_file_path = PathBuf::from(&service.log_path);
+        if !log_file_path.exists() {
             return Ok(String::new());
         }
-        let mut file = fs::File::open(&log_file_path).map_err(|e| format!("打开日志失败: {}", e))?;
-        use std::io::{Read, Seek, SeekFrom};
-        file.seek(SeekFrom::Start(byte_offset as u64)).map_err(|e| format!("seek失败: {}", e))?;
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| format!("读取失败: {}", e))?;
-        return Ok(buf);
+        let content = fs::read_to_string(&log_file_path)
+            .map_err(|e| format!("读取日志失败: {}", e))?;
+        let lines = content.lines().collect::<Vec<_>>();
+        let tail = tail_lines.unwrap_or(100);
+        let start = if lines.len() > tail { lines.len() - tail } else { 0 };
+        return Ok(lines[start..].join("\n"));
     }
 
-    // tail模式：返回最后N行，用于首次打开
-    let content = fs::read_to_string(&log_file_path)
-        .map_err(|e| format!("读取日志失败: {}", e))?;
+    // 否则从内存缓冲区读取
+    let buffers = state.log_buffers.lock().unwrap();
+    let buffer = buffers.get(&service_name);
 
-    let lines = content.lines().collect::<Vec<_>>();
-    let tail = tail_lines.unwrap_or(100);
-    let start = if lines.len() > tail { lines.len() - tail } else { 0 };
-    Ok(lines[start..].join("\n"))
+    match buffer {
+        Some(lines) => {
+            let tail = tail_lines.unwrap_or(100);
+            let start = if lines.len() > tail { lines.len() - tail } else { 0 };
+            Ok(lines[start..].join("\n"))
+        }
+        None => Ok(String::new()),
+    }
 }
 
 #[tauri::command]
-fn get_log_file_size(app: AppHandle, state: State<AppState>, service_name: String) -> Result<usize, String> {
+fn get_log_file_size(_app: AppHandle, state: State<AppState>, service_name: String) -> Result<usize, String> {
     let services = state.services.lock().unwrap();
     let service = services.values().find(|s| s.name == service_name).ok_or("服务不存在")?;
 
-    let log_file_path = if service.log_path.is_empty() {
-        let log_dir = get_log_dir(&app);
-        let safe_name = service_name.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-        log_dir.join(format!("{}.log", safe_name))
-    } else {
-        resolve_log_path(&PathBuf::from(&service.log_path))
-    };
-
-    if !log_file_path.exists() {
-        return Ok(0);
+    // 如果用户指定了日志路径，从文件获取大小
+    if !service.log_path.is_empty() {
+        let log_file_path = PathBuf::from(&service.log_path);
+        if !log_file_path.exists() {
+            return Ok(0);
+        }
+        let metadata = fs::metadata(&log_file_path).map_err(|e| format!("读取元数据失败: {}", e))?;
+        return Ok(metadata.len() as usize);
     }
 
-    let metadata = fs::metadata(&log_file_path).map_err(|e| format!("读取元数据失败: {}", e))?;
-    Ok(metadata.len() as usize)
+    // 否则从内存缓冲区获取大小
+    let buffers = state.log_buffers.lock().unwrap();
+    let buffer = buffers.get(&service_name);
+    match buffer {
+        Some(lines) => Ok(lines.join("\n").len()),
+        None => Ok(0),
+    }
+}
+
+#[tauri::command]
+fn set_log_viewer_active(state: State<AppState>, service_name: String, active: bool) -> Result<(), String> {
+    let mut viewers = state.log_viewers_active.lock().unwrap();
+    viewers.insert(service_name, active);
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_service_logs(state: State<AppState>, service_name: String) -> Result<(), String> {
+    let mut buffers = state.log_buffers.lock().unwrap();
+    if let Some(buffer) = buffers.get_mut(&service_name) {
+        // 只保留最近5行
+        if buffer.len() > 5 {
+            let drain_count = buffer.len() - 5;
+            buffer.drain(0..drain_count);
+        }
+    }
+    Ok(())
 }
 
 fn kill_process_tree(pid: u32) {
@@ -1001,7 +1234,6 @@ fn detect_running_services_by_command(services: &HashMap<String, Service>) -> Ha
             // 或者服务命令包含进程命令行（处理参数顺序不同的情况）
             if process_lower.contains(&cmd_lower) || cmd_lower.contains(&process_lower) {
                 result.insert(service_name.clone(), *pid);
-                println!("通过命令行匹配检测到服务 {} (PID: {}), 命令: {}", service_name, pid, process_cmd);
                 break;
             }
 
@@ -1015,7 +1247,6 @@ fn detect_running_services_by_command(services: &HashMap<String, Service>) -> Ha
                         let script_name = cmd_parts[2];
                         if process_lower.contains(script_name) {
                             result.insert(service_name.clone(), *pid);
-                            println!("通过 npm/pnpm 脚本匹配检测到服务 {} (PID: {}), 命令: {}", service_name, pid, process_cmd);
                             break;
                         }
                     }
@@ -1035,13 +1266,11 @@ fn detect_running_services_by_command(services: &HashMap<String, Service>) -> Ha
                     });
                     if all_match {
                         result.insert(service_name.clone(), *pid);
-                        println!("通过模糊匹配检测到服务 {} (PID: {}), 命令: {}", service_name, pid, process_cmd);
                         break;
                     }
                 } else {
                     // 只有主命令，直接匹配
                     result.insert(service_name.clone(), *pid);
-                    println!("通过主命令匹配检测到服务 {} (PID: {}), 命令: {}", service_name, pid, process_cmd);
                     break;
                 }
             }
@@ -1131,7 +1360,6 @@ fn detect_running_services(state: State<AppState>) -> Vec<String> {
         .map(|(name, pid)| format!("{} (PID: {})", name, pid))
         .collect();
 
-    println!("手动检测结果: {:?}", all_detected);
     all_detected
 }
 
@@ -1260,7 +1488,6 @@ fn export_config(state: State<AppState>, export_path: String) -> Result<(), Stri
     let json = serde_json::to_string_pretty(&config).map_err(|e| format!("序列化失败: {}", e))?;
 
     let path = PathBuf::from(&export_path);
-    println!("导出路径: {:?}", path);
 
     // 确保父目录存在
     if let Some(parent) = path.parent() {
@@ -1272,7 +1499,6 @@ fn export_config(state: State<AppState>, export_path: String) -> Result<(), Stri
     // 直接写入文件
     fs::write(&path, &json).map_err(|e| format!("写入文件失败: {}, 路径: {:?}", e, path))?;
 
-    println!("导出成功: {:?}", path);
     Ok(())
 }
 
@@ -1355,6 +1581,20 @@ fn open_directory(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_settings(state: State<AppState>) -> AppSettings {
+    state.settings.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_settings(app: AppHandle, state: State<AppState>, settings: AppSettings) -> Result<(), String> {
+    {
+        let mut s = state.settings.lock().unwrap();
+        *s = settings;
+    }
+    save_all(&app, &state)
+}
+
+#[tauri::command]
 fn open_terminal(path: String) -> Result<(), String> {
     let path = PathBuf::from(&path);
     if !path.exists() {
@@ -1406,18 +1646,119 @@ fn get_available_commands(path: String, service_type: String) -> Result<Vec<Stri
             if !pom_path.exists() {
                 return Err("未找到 pom.xml 文件".to_string());
             }
-            // 返回常用maven命令
-            let commands = vec![
-                "clean".to_string(),
-                "compile".to_string(),
-                "test".to_string(),
-                "package".to_string(),
-                "install".to_string(),
-                "deploy".to_string(),
-                "clean install".to_string(),
-                "clean package".to_string(),
-            ];
-            Ok(commands)
+
+            let content = fs::read_to_string(&pom_path)
+                .map_err(|e| format!("读取 pom.xml 失败: {}", e))?;
+
+            let mut commands = Vec::new();
+            let mut is_multi_module = false;
+            let mut has_spring_boot = false;
+            let mut main_module = String::new();
+
+            // 检测是否是多模块项目
+            if content.contains("<modules>") && content.contains("<module>") {
+                is_multi_module = true;
+
+                // 提取模块名称
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.contains("<module>") && trimmed.contains("</module>") {
+                        if let Some(start) = trimmed.find("<module>") {
+                            let rest = &trimmed[start + 8..];
+                            if let Some(end) = rest.find("</module>") {
+                                let module_name = rest[..end].trim().to_string();
+                                // 检查子模块是否有 main class
+                                let module_path = path.join(&module_name);
+                                if module_path.exists() {
+                                    let module_pom = module_path.join("pom.xml");
+                                    if module_pom.exists() {
+                                        let module_content = fs::read_to_string(&module_pom).unwrap_or_default();
+                                        if module_content.contains("spring-boot-maven-plugin") {
+                                            main_module = module_name;
+                                            has_spring_boot = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 单模块项目
+                if content.contains("spring-boot-maven-plugin") {
+                    has_spring_boot = true;
+                }
+            }
+
+            // 解析 pom.xml 中的 profiles
+            let mut in_profiles = false;
+            let mut in_profile = false;
+            let mut current_id = String::new();
+
+            for line in content.lines() {
+                let trimmed = line.trim();
+
+                if trimmed.contains("<profiles>") {
+                    in_profiles = true;
+                    continue;
+                }
+
+                if trimmed.contains("</profiles>") {
+                    in_profiles = false;
+                    continue;
+                }
+
+                if in_profiles && trimmed.contains("<profile>") {
+                    in_profile = true;
+                    current_id.clear();
+                    continue;
+                }
+
+                if in_profile && trimmed.contains("</profile>") {
+                    in_profile = false;
+                    if !current_id.is_empty() {
+                        commands.push(format!("-P{}", current_id));
+                        commands.push(format!("clean install -P{}", current_id));
+                    }
+                    continue;
+                }
+
+                if in_profile && trimmed.contains("<id>") {
+                    if let Some(start) = trimmed.find("<id>") {
+                        let rest = &trimmed[start + 4..];
+                        if let Some(end) = rest.find("</id>") {
+                            current_id = rest[..end].trim().to_string();
+                        }
+                    }
+                }
+            }
+
+            // 添加常用 maven 命令（精简版）
+            let mut result: Vec<String> = Vec::new();
+
+            // 启动命令（最常用，放最前面）
+            if has_spring_boot {
+                if is_multi_module && !main_module.is_empty() {
+                    result.push(format!("spring-boot:run -pl {}", main_module));
+                } else {
+                    result.push("spring-boot:run".to_string());
+                }
+            }
+
+            // 常用构建命令
+            result.push("clean install".to_string());
+            result.push("clean package".to_string());
+            result.push("clean package -DskipTests".to_string());
+            result.push("compile".to_string());
+            result.push("test".to_string());
+
+            // Profile 命令（如果有）
+            result.extend(commands);
+
+            // 去重
+            result.dedup();
+
+            Ok(result)
         }
         _ => Ok(vec![]),
     }
@@ -1425,7 +1766,7 @@ fn get_available_commands(path: String, service_type: String) -> Result<Vec<Stri
 
 #[tauri::command]
 #[allow(non_snake_case)]
-async fn execute_command(command: String, workDir: String) -> Result<String, String> {
+async fn execute_command(app: AppHandle, state: State<'_, AppState>, command: String, workDir: String) -> Result<(), String> {
     let work_dir = PathBuf::from(&workDir);
     if !work_dir.exists() {
         return Err("工作目录不存在".to_string());
@@ -1436,110 +1777,109 @@ async fn execute_command(command: String, workDir: String) -> Result<String, Str
         return Err("命令不能为空".to_string());
     }
 
-    // 用 spawn_blocking 把阻塞逻辑放到独立线程池，不阻塞 tokio 运行时
-    let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let timeout_secs = 30u64;
+    let app_handle = app.clone();
 
-        std::thread::spawn(move || {
-            #[cfg(windows)]
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
+    // 读取环境配置
+    let settings = state.settings.lock().unwrap().clone();
 
-            #[cfg(windows)]
-            let child = {
-                let full_command = format!("chcp 65001 >nul && {}", cmd);
-                let mut cmd = std::process::Command::new("cmd");
-                cmd.args(["/C", &full_command])
-                    .current_dir(&work_dir)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .creation_flags(CREATE_NO_WINDOW);
-                cmd.spawn()
-            };
+    // 构建环境变量
+    let mut envs: Vec<(String, String)> = std::env::vars().collect();
+    if !settings.java_home.is_empty() {
+        envs.push(("JAVA_HOME".to_string(), settings.java_home.clone()));
+        let java_bin = PathBuf::from(&settings.java_home).join("bin").display().to_string();
+        if let Some((_, path)) = envs.iter_mut().find(|(k, _)| k == "PATH") {
+            *path = format!("{};{}", java_bin, path);
+        }
+    }
+    if !settings.maven_home.is_empty() {
+        envs.push(("MAVEN_HOME".to_string(), settings.maven_home.clone()));
+        let maven_bin = PathBuf::from(&settings.maven_home).join("bin").display().to_string();
+        if let Some((_, path)) = envs.iter_mut().find(|(k, _)| k == "PATH") {
+            *path = format!("{};{}", maven_bin, path);
+        }
+    }
 
-            #[cfg(not(windows))]
-            let child = {
-                let mut cmd = std::process::Command::new("sh");
-                cmd.args(["-c", &cmd])
-                    .current_dir(&work_dir)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-                cmd.spawn()
-            };
+    // 在后台线程执行命令
+    std::thread::spawn(move || {
+        // 智能转换 Maven spring-boot:run 命令
+        let smart_cmd = smart_convert_maven_command(&cmd, &workDir);
+        eprintln!("[execute_command] 原始命令: {}, 转换后: {}", cmd, smart_cmd);
 
-            match child {
-                Ok(mut child) => {
-                    let start = std::time::Instant::now();
-                    loop {
-                        match child.try_wait() {
-                            Ok(Some(_)) => {
-                                let output = child.wait_with_output();
-                                let _ = tx.send(output);
-                                return;
-                            }
-                            Ok(None) => {
-                                if start.elapsed().as_secs() >= timeout_secs {
-                                    let _ = child.kill();
-                                    let _ = child.wait();
-                                    let _ = tx.send(Err(std::io::Error::new(
-                                        std::io::ErrorKind::TimedOut,
-                                        "命令执行超时(30秒)，长时间运行的命令请使用服务启动功能",
-                                    )));
-                                    return;
-                                }
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Err(e));
-                                return;
+        let mut child_cmd = build_command(&smart_cmd, &workDir, &settings, &HashMap::new());
+        child_cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        child_cmd.creation_flags(CREATE_NO_WINDOW);
+        let child = child_cmd.spawn();
+
+        match child {
+            Ok(mut child) => {
+                // 读取 stdout
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+
+                let app_clone = app_handle.clone();
+                let app_clone2 = app_handle.clone();
+
+                // 后台线程读取 stdout
+                if let Some(stdout) = stdout {
+                    std::thread::spawn(move || {
+                        use std::io::{BufRead, BufReader};
+                        let reader = BufReader::new(stdout);
+                        for line in reader.lines() {
+                            if let Ok(line) = line {
+                                let _ = app_clone.emit("command-output", serde_json::json!({
+                                    "type": "stdout",
+                                    "line": line
+                                }));
                             }
                         }
+                    });
+                }
+
+                // 后台线程读取 stderr
+                if let Some(stderr) = stderr {
+                    std::thread::spawn(move || {
+                        use std::io::{BufRead, BufReader};
+                        let reader = BufReader::new(stderr);
+                        for line in reader.lines() {
+                            if let Ok(line) = line {
+                                let _ = app_clone2.emit("command-output", serde_json::json!({
+                                    "type": "stderr",
+                                    "line": line
+                                }));
+                            }
+                        }
+                    });
+                }
+
+                // 等待命令完成
+                let status = child.wait();
+                match status {
+                    Ok(status) => {
+                        let _ = app_handle.emit("command-finished", serde_json::json!({
+                            "success": status.success(),
+                            "code": status.code()
+                        }));
+                    }
+                    Err(e) => {
+                        let _ = app_handle.emit("command-finished", serde_json::json!({
+                            "success": false,
+                            "error": format!("等待命令完成失败: {}", e)
+                        }));
                     }
                 }
-                Err(e) => {
-                    let _ = tx.send(Err(e));
-                }
             }
-        });
-
-        let output = rx.recv()
-            .map_err(|_| "命令执行失败".to_string())?
-            .map_err(|e| format!("执行失败: {}", e))?;
-
-        // Windows下尝试用GBK解码，失败则用UTF-8
-        #[cfg(windows)]
-        let (stdout, stderr) = {
-            use encoding_rs::GBK;
-            let (stdout_decoded, _, _) = GBK.decode(&output.stdout);
-            let (stderr_decoded, _, _) = GBK.decode(&output.stderr);
-            (stdout_decoded.to_string(), stderr_decoded.to_string())
-        };
-
-        #[cfg(not(windows))]
-        let (stdout, stderr) = {
-            (String::from_utf8_lossy(&output.stdout).to_string(),
-             String::from_utf8_lossy(&output.stderr).to_string())
-        };
-
-        let mut result = String::new();
-        if !stdout.is_empty() {
-            result.push_str(&stdout);
-        }
-        if !stderr.is_empty() {
-            if !result.is_empty() {
-                result.push('\n');
+            Err(e) => {
+                let _ = app_handle.emit("command-finished", serde_json::json!({
+                    "success": false,
+                    "error": format!("启动命令失败: {}", e)
+                }));
             }
-            result.push_str(&stderr);
         }
+    });
 
-        if result.is_empty() && !output.status.success() {
-            return Err(format!("命令执行失败，退出码: {}", output.status.code().unwrap_or(-1)));
-        }
-
-        Ok(result)
-    }).await.map_err(|e| format!("任务执行失败: {}", e))?;
-
-    result
+    Ok(())
 }
 
 
@@ -1561,7 +1901,6 @@ pub fn run() {
             for (service_name, pid) in &config.running_pids {
                 if is_pid_alive(*pid) {
                     detected_pids.insert(service_name.clone(), *pid);
-                    println!("通过 PID 检测到服务 {} (PID: {}) 仍在运行", service_name, pid);
                 }
             }
 
@@ -1591,7 +1930,6 @@ pub fn run() {
             tray.set_menu(Some(menu.clone()))?;
 
             // 处理托盘菜单事件
-            let app_handle = app.handle().clone();
             tray.on_menu_event(move |app, event| {
                 match event.id().as_ref() {
                     "show" => {
@@ -1606,8 +1944,15 @@ pub fn run() {
                         }
                     }
                     "exit" => {
-                        // 保存配置并退出
+                        // 保存配置并终止所有子进程后退出
                         if let Some(state) = app.try_state::<AppState>() {
+                            // 终止所有运行中的子进程
+                            if let Ok(mut processes) = state.processes.lock() {
+                                for (_, mut process) in processes.drain() {
+                                    kill_process_tree(process.id());
+                                    let _ = process.wait();
+                                }
+                            }
                             let _ = save_all(app, &state);
                         }
                         app.exit(0);
@@ -1646,6 +1991,8 @@ pub fn run() {
                 processes: Mutex::new(HashMap::new()),
                 detected_pids: Mutex::new(detected_pids),
                 settings: Mutex::new(config.settings),
+                log_buffers: Arc::new(Mutex::new(HashMap::new())),
+                log_viewers_active: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
         })
@@ -1677,6 +2024,8 @@ pub fn run() {
             detect_running_services,
             get_service_logs,
             get_log_file_size,
+            set_log_viewer_active,
+            clear_service_logs,
             get_service_status,
             check_service_health,
             batch_start_services,
@@ -1689,6 +2038,9 @@ pub fn run() {
             open_terminal,
             get_available_commands,
             execute_command,
+            // 设置
+            get_settings,
+            save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

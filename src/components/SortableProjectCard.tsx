@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Play, Square, Edit3, Trash2, Star, ChevronDown, ChevronRight, FolderOpen, RotateCw, Rocket, FileText } from "lucide-react";
-import { confirm } from "@tauri-apps/plugin-dialog";
-import type { Project } from "../types";
+import { GripVertical, Play, Square, Edit3, Trash2, Star, ChevronDown, ChevronRight, FolderOpen, RotateCw, Rocket, FileText, Terminal } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import type { Project, Service } from "../types";
 import { ActionButton } from "./ActionButton";
 import { ServiceStatusDot } from "./ServiceStatusDot";
+import { CommandTerminal } from "./CommandTerminal";
 
 interface SortableProjectCardProps {
   project: Project;
@@ -45,26 +46,13 @@ export function SortableProjectCard({
   onConfirmDelete,
 }: SortableProjectCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: project.id });
-  const [loading, setLoading] = useState(false);
   const [loadingService, setLoadingService] = useState<string | null>(null);
+  const [terminalService, setTerminalService] = useState<Service | null>(null);
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? "none" : transition,
     zIndex: isDragging ? 50 : "auto" as const,
-  };
-
-  const handleToggle = async () => {
-    setLoading(true);
-    try {
-      if (isProjectRunning) {
-        await onStop();
-      } else {
-        await onStart();
-      }
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleDelete = async () => {
@@ -89,7 +77,6 @@ export function SortableProjectCard({
 
   const handleOpenDirectory = async (path: string) => {
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
       await invoke("open_directory", { path });
     } catch (e) {
       console.error("打开目录失败:", e);
@@ -179,20 +166,17 @@ export function SortableProjectCard({
                   onClick={onStart}
                   title="启动项目"
                   variant="success"
-                  disabled={loading}
                 />
                 <ActionButton
                   icon={<Square className="w-3.5 h-3.5" />}
                   onClick={onStop}
                   title="停止项目"
                   variant="danger"
-                  disabled={loading}
                 />
                 <ActionButton
                   icon={<RotateCw className="w-3.5 h-3.5" />}
                   onClick={onRestart}
                   title="重启项目"
-                  disabled={loading}
                 />
               </>
             )}
@@ -236,13 +220,20 @@ export function SortableProjectCard({
                         title="打开目录"
                         disabled={loadingService === service.name}
                       />
+                      <ActionButton
+                        icon={<FileText className="w-3 h-3" />}
+                        onClick={() => onViewLogs(service.name)}
+                        title="查看日志"
+                      />
+                      {(service.service_type === "npm" || service.service_type === "maven") && (
+                        <ActionButton
+                          icon={<Terminal className="w-3 h-3" />}
+                          onClick={() => setTerminalService(service)}
+                          title="命令终端"
+                        />
+                      )}
                       {svcRunning ? (
                         <>
-                          <ActionButton
-                            icon={<FileText className="w-3 h-3" />}
-                            onClick={() => onViewLogs(service.name)}
-                            title="查看日志"
-                          />
                           <ActionButton
                             icon={<RotateCw className="w-3 h-3" />}
                             onClick={() => handleServiceAction(service.name, () => onRestartService(service.name))}
@@ -274,6 +265,16 @@ export function SortableProjectCard({
           </div>
         )}
       </div>
+
+      {/* 命令终端弹窗 */}
+      {terminalService && (
+        <CommandTerminal
+          serviceName={terminalService.name}
+          servicePath={terminalService.path}
+          serviceType={terminalService.service_type || "normal"}
+          onClose={() => setTerminalService(null)}
+        />
+      )}
     </div>
   );
 }

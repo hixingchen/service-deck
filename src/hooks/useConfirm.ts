@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 interface ConfirmOptions {
   title: string;
@@ -11,6 +11,16 @@ interface ConfirmOptions {
 export function useConfirm() {
   const [options, setOptions] = useState<ConfirmOptions | null>(null);
   const resolveRef = useRef<((value: boolean) => void) | null>(null);
+
+  // 组件卸载时自动 resolve pending 的 Promise，防止内存泄漏
+  useEffect(() => {
+    return () => {
+      if (resolveRef.current) {
+        resolveRef.current(false);
+        resolveRef.current = null;
+      }
+    };
+  }, []);
 
   const confirm = useCallback((opts: ConfirmOptions): Promise<boolean> => {
     return new Promise((resolve) => {

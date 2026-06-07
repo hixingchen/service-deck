@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Plus, ArrowLeft, X, RefreshCw, Link, FolderOpen } from "lucide-react";
+import { ArrowLeft, RefreshCw, FolderOpen } from "lucide-react";
 import { FormField } from "./FormField";
 import { FormFooter } from "./FormFooter";
-import type { Service } from "../types";
 
 interface Props {
   title: string;
@@ -12,16 +11,12 @@ interface Props {
   command: string;
   path: string;
   serviceType: string;
-  envVars: Record<string, string>;
   logPath: string;
-  dependsOn: string[];
   onNameChange: (v: string) => void;
   onCommandChange: (v: string) => void;
   onPathChange: (v: string) => void;
   onServiceTypeChange: (v: string) => void;
-  onEnvVarsChange: (v: Record<string, string>) => void;
   onLogPathChange: (v: string) => void;
-  onDependsOnChange: (v: string[]) => void;
   onClose: () => void;
   onSubmit: () => void;
   submitLabel: string;
@@ -54,56 +49,19 @@ export function ServiceFormModal({
   command,
   path,
   serviceType,
-  envVars,
   logPath,
-  dependsOn,
   onNameChange,
   onCommandChange,
   onPathChange,
   onServiceTypeChange,
-  onEnvVarsChange,
   onLogPathChange,
-  onDependsOnChange,
   onClose,
   onSubmit,
   submitLabel,
 }: Props) {
-  const envEntries = Object.entries(envVars);
   const [availableCommands, setAvailableCommands] = useState<string[]>([]);
   const [loadingCommands, setLoadingCommands] = useState(false);
-  const [allServices, setAllServices] = useState<Service[]>([]);
-  const [showDepsDropdown, setShowDepsDropdown] = useState(false);
-  const [depsSearch, setDepsSearch] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const depsDropdownRef = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭依赖下拉框
-  useEffect(() => {
-    if (!showDepsDropdown) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (depsDropdownRef.current && !depsDropdownRef.current.contains(e.target as Node)) {
-        setShowDepsDropdown(false);
-        setDepsSearch("");
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showDepsDropdown]);
-
-  // 加载所有服务（用于依赖选择）
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const services = await invoke<Service[]>("get_services");
-        if (!cancelled) setAllServices(services);
-      } catch (e) {
-        console.error("加载服务列表失败:", e);
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, []);
 
   // 当服务类型或路径变化时，自动获取可用命令
   useEffect(() => {
@@ -131,43 +89,6 @@ export function ServiceFormModal({
     }
   }, [serviceType, path]);
 
-  function addEnvVar() {
-    // 生成唯一空 key，避免多条空 key 覆盖
-    let idx = 1;
-    let newKey = `KEY_${idx}`;
-    while (newKey in envVars) {
-      idx++;
-      newKey = `KEY_${idx}`;
-    }
-    onEnvVarsChange({ ...envVars, [newKey]: "" });
-  }
-
-  function updateEnvVarKey(oldKey: string, newKey: string) {
-    // 如果新 key 为空或与旧 key 相同，不处理
-    if (!newKey.trim() || newKey === oldKey) return;
-    // 如果新 key 已存在，不允许覆盖
-    if (newKey in envVars && newKey !== oldKey) return;
-    const entries = Object.entries(envVars).map(([k, v]) => k === oldKey ? [newKey, v] : [k, v]);
-    onEnvVarsChange(Object.fromEntries(entries));
-  }
-
-  function updateEnvVarValue(key: string, value: string) {
-    onEnvVarsChange({ ...envVars, [key]: value });
-  }
-
-  function removeEnvVar(key: string) {
-    const { [key]: _, ...rest } = envVars;
-    onEnvVarsChange(rest);
-  }
-
-  function toggleDependency(serviceId: string) {
-    if (dependsOn.includes(serviceId)) {
-      onDependsOnChange(dependsOn.filter(id => id !== serviceId));
-    } else {
-      onDependsOnChange([...dependsOn, serviceId]);
-    }
-  }
-
   // 表单验证
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -185,11 +106,6 @@ export function ServiceFormModal({
   };
 
   const showCommandSelector = (serviceType === "npm" || serviceType === "maven") && availableCommands.length > 0;
-
-  // 过滤掉当前正在编辑的服务（不能依赖自己）- 使用名称匹配（编辑时名称唯一）
-  const availableForDeps = allServices
-    .filter(s => s.name !== name || !name.trim())
-    .filter(s => !depsSearch.trim() || s.name.toLowerCase().includes(depsSearch.toLowerCase()));
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0f]" style={{ top: '2.75rem' }}>
@@ -340,144 +256,6 @@ export function ServiceFormModal({
                 <FolderOpen className="w-4 h-4" />
               </button>
             </div>
-          </div>
-
-          {/* 服务依赖 */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-[13px] font-medium text-gray-400">服务依赖（可选）</label>
-              <span className="text-[11px] text-gray-600">启动时会自动先启动依赖服务</span>
-            </div>
-            <div className="relative" ref={depsDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setShowDepsDropdown(!showDepsDropdown)}
-                className="w-full px-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 focus:outline-none focus:border-blue-500/50 text-[13px] text-left flex items-center gap-2"
-              >
-                <Link className="w-3.5 h-3.5 text-gray-500" />
-                {dependsOn.length === 0 ? (
-                  <span className="text-gray-600">选择依赖服务...</span>
-                ) : (
-                  <span>已选择 {dependsOn.length} 个依赖</span>
-                )}
-              </button>
-
-              {showDepsDropdown && (
-                <div className="absolute z-10 w-full mt-1 rounded-xl bg-[#1a1a2e] border border-white/[0.1] shadow-xl overflow-hidden">
-                  {/* 搜索框 */}
-                  <div className="p-2 border-b border-white/[0.06]">
-                    <input
-                      type="text"
-                      value={depsSearch}
-                      onChange={(e) => setDepsSearch(e.target.value)}
-                      placeholder="搜索服务..."
-                      className="w-full h-7 px-2 rounded-md bg-white/[0.04] border border-white/[0.08] text-[12px] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-                      autoFocus
-                    />
-                  </div>
-                  {/* 服务列表 */}
-                  <div className="max-h-40 overflow-y-auto">
-                    {availableForDeps.length === 0 ? (
-                      <div className="px-3 py-2 text-[12px] text-gray-600">
-                        {depsSearch.trim() ? "未找到匹配的服务" : "暂无可用服务"}
-                      </div>
-                    ) : (
-                      availableForDeps.map((service) => (
-                        <button
-                          key={service.id}
-                          type="button"
-                          onClick={() => toggleDependency(service.id)}
-                          className={`w-full px-3 py-2 text-left text-[13px] hover:bg-white/[0.06] transition-colors flex items-center gap-2 ${
-                            dependsOn.includes(service.id) ? "text-blue-400" : "text-gray-400"
-                          }`}
-                        >
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                            dependsOn.includes(service.id)
-                              ? "bg-blue-600 border-blue-600"
-                              : "border-gray-600"
-                          }`}>
-                            {dependsOn.includes(service.id) && (
-                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <span className="truncate block">{service.name}</span>
-                            <span className="text-[11px] text-gray-600 truncate block">{service.command}</span>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 已选择的依赖列表 */}
-            {dependsOn.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-2">
-                {dependsOn.map((depId) => {
-                  const dep = allServices.find(s => s.id === depId);
-                  if (!dep) return null;
-                  return (
-                    <span
-                      key={depId}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-500/20 text-blue-400 text-[12px]"
-                    >
-                      {dep.name}
-                      <button
-                        type="button"
-                        onClick={() => toggleDependency(depId)}
-                        className="hover:text-blue-300"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* 环境变量 */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-[13px] font-medium text-gray-400">环境变量（可选）</label>
-              <button onClick={addEnvVar}
-                className="h-7 px-2.5 flex items-center gap-1 rounded-md bg-white/[0.06] text-gray-400 text-[12px] font-medium hover:bg-white/[0.1] hover:text-white transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> 添加
-              </button>
-            </div>
-            {envEntries.length === 0 ? (
-              <div className="py-3 text-center text-[12px] text-gray-600">暂无环境变量</div>
-            ) : (
-              <div className="space-y-2">
-                {envEntries.map(([key, value], index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <input
-                      placeholder="KEY"
-                      value={key}
-                      onChange={(e) => updateEnvVarKey(key, e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 text-[13px] font-mono"
-                    />
-                    <span className="text-gray-600 text-[13px]">=</span>
-                    <input
-                      placeholder="VALUE"
-                      value={value}
-                      onChange={(e) => updateEnvVarValue(key, e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 text-[13px] font-mono"
-                    />
-                    <button onClick={() => removeEnvVar(key)}
-                      className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors flex-shrink-0"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>

@@ -1,6 +1,103 @@
 import { useState, useRef, useEffect } from "react";
 import { ArrowLeft, Search, X, RotateCw, Square, Play } from "lucide-react";
 
+// ANSI 颜色映射
+const ANSI_COLORS: Record<string, string> = {
+  // 前景色
+  "30": "#000000", "31": "#e74c3c", "32": "#2ecc71", "33": "#f39c12",
+  "34": "#3498db", "35": "#9b59b6", "36": "#1abc9c", "37": "#ecf0f1",
+  "90": "#95a5a6", "91": "#e74c3c", "92": "#2ecc71", "93": "#f39c12",
+  "94": "#3498db", "95": "#9b59b6", "96": "#1abc9c", "97": "#ffffff",
+  // 背景色
+  "40": "#000000", "41": "#e74c3c", "42": "#2ecc71", "43": "#f39c12",
+  "44": "#3498db", "45": "#9b59b6", "46": "#1abc9c", "47": "#ecf0f1",
+  "100": "#95a5a6", "101": "#e74c3c", "102": "#2ecc71", "103": "#f39c12",
+  "104": "#3498db", "105": "#9b59b6", "106": "#1abc9c", "107": "#ffffff",
+};
+
+// 解析 ANSI 转义码为 HTML
+function ansiToHtml(text: string): string {
+  // 匹配 ANSI 转义序列: ESC[ ... m
+  const regex = /\x1b\[([0-9;]*)m/g;
+  let result = "";
+  let lastIndex = 0;
+  let currentStyles: string[] = [];
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    // 添加匹配前的文本
+    if (match.index > lastIndex) {
+      const textContent = text.slice(lastIndex, match.index);
+      if (currentStyles.length > 0) {
+        result += `<span style="${currentStyles.join(";")}">${escapeHtml(textContent)}</span>`;
+      } else {
+        result += escapeHtml(textContent);
+      }
+    }
+
+    // 解析 ANSI 参数
+    const params = match[1].split(";").map(Number);
+    for (const param of params) {
+      if (param === 0) {
+        // 重置所有样式
+        currentStyles = [];
+      } else if (param === 1) {
+        // 粗体
+        currentStyles.push("font-weight:bold");
+      } else if (param === 2) {
+        // 暗淡
+        currentStyles.push("opacity:0.7");
+      } else if (param === 3) {
+        // 斜体
+        currentStyles.push("font-style:italic");
+      } else if (param === 4) {
+        // 下划线
+        currentStyles.push("text-decoration:underline");
+      } else if (param >= 30 && param <= 37) {
+        // 前景色
+        currentStyles = currentStyles.filter(s => !s.startsWith("color:"));
+        currentStyles.push(`color:${ANSI_COLORS[String(param)]}`);
+      } else if (param >= 90 && param <= 97) {
+        // 亮色前景色
+        currentStyles = currentStyles.filter(s => !s.startsWith("color:"));
+        currentStyles.push(`color:${ANSI_COLORS[String(param)]}`);
+      } else if (param >= 40 && param <= 47) {
+        // 背景色
+        currentStyles = currentStyles.filter(s => !s.startsWith("background-color:"));
+        currentStyles.push(`background-color:${ANSI_COLORS[String(param)]}`);
+      } else if (param >= 100 && param <= 107) {
+        // 亮色背景色
+        currentStyles = currentStyles.filter(s => !s.startsWith("background-color:"));
+        currentStyles.push(`background-color:${ANSI_COLORS[String(param)]}`);
+      }
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  // 添加剩余文本
+  if (lastIndex < text.length) {
+    const textContent = text.slice(lastIndex);
+    if (currentStyles.length > 0) {
+      result += `<span style="${currentStyles.join(";")}">${escapeHtml(textContent)}</span>`;
+    } else {
+      result += escapeHtml(textContent);
+    }
+  }
+
+  return result;
+}
+
+// HTML 转义
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 interface Props {
   serviceName: string;
   content: string;
@@ -37,7 +134,7 @@ export function LogViewerPanel({ serviceName, content, running = false, onClose,
     if (!pausedRef.current && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [displayContent]);
+  }, [content]);
 
   // 暂停状态同步到 ref
   const handlePauseToggle = () => {
@@ -166,15 +263,18 @@ export function LogViewerPanel({ serviceName, content, running = false, onClose,
       {/* 日志内容 */}
       <div className="flex-1 overflow-y-auto p-4 font-mono text-[12px] leading-relaxed">
         {displayContent ? (
-          <pre className="text-gray-300 whitespace-pre-wrap break-all">
-            {displayContent}
-            <div ref={logEndRef} />
-          </pre>
+          <pre
+            className="text-gray-300 whitespace-pre-wrap break-all"
+            dangerouslySetInnerHTML={{
+              __html: displayContent.split('\n').map(line => ansiToHtml(line)).join('\n')
+            }}
+          />
         ) : (
           <div className="flex items-center justify-center h-full text-gray-500">
             <p className="text-[13px]">{clearOffset !== null ? "已清屏，新日志将在此显示" : "暂无日志输出"}</p>
           </div>
         )}
+        <div ref={logEndRef} />
       </div>
     </div>
   );

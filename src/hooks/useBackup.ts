@@ -51,8 +51,8 @@ export function useBackup() {
       let path: string | null = null;
       if (typeof filePath === 'string') {
         path = filePath;
-      } else if (Array.isArray(filePath) && filePath.length > 0) {
-        path = filePath[0];
+      } else if (Array.isArray(filePath) && (filePath as string[]).length > 0) {
+        path = (filePath as string[])[0];
       }
 
       if (path && path.length > 0) {

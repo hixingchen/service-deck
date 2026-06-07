@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, FolderOpen, Wrench, X, Layers, Clock, GitBranch, Terminal, HardDrive, Globe, MoreHorizontal, Star } from "lucide-react";
+import { Plus, FolderOpen, Wrench, X, Layers, HardDrive, MoreHorizontal, Star, Settings } from "lucide-react";
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
@@ -13,17 +13,9 @@ import { ProjectGroups } from "./components/ProjectGroups";
 import { ServiceFormModal } from "./components/ServiceFormModal";
 import { ProjectFormModal } from "./components/ProjectFormModal";
 import { LogViewerPanel } from "./components/LogViewerPanel";
-import { ServiceDashboard } from "./components/ServiceDashboard";
-import { QuickSwitcher } from "./components/QuickSwitcher";
-import { QuickProjectSwitcher } from "./components/QuickProjectSwitcher";
 import { BatchOperations } from "./components/BatchOperations";
-import { ServiceHealthCheck } from "./components/ServiceHealthCheck";
-import { ServiceDependencyGraph } from "./components/ServiceDependencyGraph";
-import { ServiceEnvironmentSelector } from "./components/ServiceEnvironmentSelector";
-import { SchedulerPanel } from "./components/SchedulerPanel";
-import { WorkflowPanel } from "./components/WorkflowPanel";
-import { ScriptsPanel } from "./components/ScriptsPanel";
 import { BackupRestorePanel } from "./components/BackupRestorePanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 import {
   useServices,
@@ -33,9 +25,6 @@ import {
   useServiceForm,
   useProjectForm,
   useBackup,
-  useScheduler,
-  useWorkflow,
-  useScripts,
   useConfirm,
 } from "./hooks";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -43,13 +32,9 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 function App() {
   // 视图状态
   const [view, setView] = useState<View>("projects");
-  const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
-  const [showQuickProjectSwitcher, setShowQuickProjectSwitcher] = useState(false);
   const [showBatchOps, setShowBatchOps] = useState(false);
-  const [showHealthCheck, setShowHealthCheck] = useState<string | null>(null);
-  const [showEnvSelector, setShowEnvSelector] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
-  const [currentEnv, setCurrentEnv] = useState("development");
   const [serviceSearch, setServiceSearch] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
 
@@ -91,12 +76,6 @@ function App() {
 
   // 功能扩展 hooks
   const { backing, restoring, lastBackup, createBackup, restoreBackup } = useBackup();
-  const { tasks: scheduledTasks, running: schedulerRunning, addTask: addScheduledTask, removeTask: removeScheduledTask, toggleTask: toggleScheduledTask, startScheduler, stopScheduler } = useScheduler();
-  const { workflows, addWorkflow, removeWorkflow: removeWorkflowItem, toggleWorkflow, startWorkflow } = useWorkflow();
-  const { scripts, addScript, removeScript: removeScriptItem, toggleScript, runScript } = useScripts();
-  const [showScheduler, setShowScheduler] = useState(false);
-  const [showWorkflows, setShowWorkflows] = useState(false);
-  const [showScripts, setShowScripts] = useState(false);
   const [showBackupRestore, setShowBackupRestore] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -123,14 +102,13 @@ function App() {
   // 初始化加载
   useEffect(() => {
     loadData();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadData]);
 
   // 定时轮询运行状态
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
         const r = await invoke<string[]>("get_running_services");
-        console.log("运行中的服务:", r);
         setRunningServices(r);
       } catch (e) {
         console.error("轮询运行状态失败:", e);
@@ -163,19 +141,19 @@ function App() {
     });
   }, [services]);
 
-  // 拖拽处理
-  const { sensors, handleServiceDragEnd, handleProjectDragEnd } = useDnD(
-    sortedServices,
-    sortedProjects,
-    loadData
-  );
-
   // 搜索过滤
   const filteredServices = useMemo(() => {
     if (!serviceSearch.trim()) return sortedServices;
     const q = serviceSearch.trim().toLowerCase();
     return sortedServices.filter((s) => s.name.toLowerCase().includes(q));
   }, [sortedServices, serviceSearch]);
+
+  // 拖拽处理（使用过滤后的列表，确保索引与 SortableContext 一致）
+  const { sensors, handleServiceDragEnd, handleProjectDragEnd } = useDnD(
+    filteredServices,
+    filteredProjects,
+    loadData
+  );
 
   // 分组：收藏 和 全部
   const favoriteServices = useMemo(() => {
@@ -188,7 +166,7 @@ function App() {
 
   // 服务操作
   const handleAddService = async () => {
-    const { serviceName, serviceCommand, servicePath, serviceType, serviceEnvVars, serviceLogPath, serviceDependsOn } = serviceForm;
+    const { serviceName, serviceCommand, servicePath, serviceType, serviceLogPath } = serviceForm;
     if (!serviceName.trim() || !serviceCommand.trim() || !servicePath.trim()) return;
 
     try {
@@ -197,9 +175,7 @@ function App() {
         command: serviceCommand.trim(),
         path: servicePath.trim(),
         serviceType,
-        envVars: serviceEnvVars,
         logPath: serviceLogPath.trim(),
-        dependsOn: serviceDependsOn,
       });
       serviceForm.closeForm();
     } catch (e) {
@@ -209,7 +185,7 @@ function App() {
   };
 
   const handleUpdateService = async () => {
-    const { editingService, serviceName, serviceCommand, servicePath, serviceType, serviceEnvVars, serviceLogPath, serviceDependsOn } = serviceForm;
+    const { editingService, serviceName, serviceCommand, servicePath, serviceType, serviceLogPath } = serviceForm;
     if (!editingService) return;
     if (!serviceName.trim() || !serviceCommand.trim() || !servicePath.trim()) return;
 
@@ -220,9 +196,7 @@ function App() {
         command: serviceCommand.trim(),
         path: servicePath.trim(),
         serviceType,
-        envVars: serviceEnvVars,
         logPath: serviceLogPath.trim(),
-        dependsOn: serviceDependsOn,
       });
       serviceForm.closeForm();
     } catch (e) {
@@ -292,7 +266,9 @@ function App() {
       await invoke("batch_start_services", { serviceNames });
       loadData();
     } catch (e) {
-      console.error("批量启动失败:", e);
+      const msg = `批量启动失败: ${e}`;
+      console.error(msg);
+      setGlobalError(msg);
     }
   };
 
@@ -301,7 +277,9 @@ function App() {
       await invoke("batch_stop_services", { serviceNames });
       loadData();
     } catch (e) {
-      console.error("批量停止失败:", e);
+      const msg = `批量停止失败: ${e}`;
+      console.error(msg);
+      setGlobalError(msg);
     }
   };
 
@@ -311,7 +289,9 @@ function App() {
       await invoke("batch_start_services", { serviceNames });
       loadData();
     } catch (e) {
-      console.error("批量重启失败:", e);
+      const msg = `批量重启失败: ${e}`;
+      console.error(msg);
+      setGlobalError(msg);
     }
   };
 
@@ -385,28 +365,6 @@ function App() {
                 <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
                 <div className="absolute right-0 top-10 z-50 w-48 py-1 rounded-xl bg-[#1a1a2e] border border-white/[0.1] shadow-xl">
                   <button
-                    onClick={() => { setShowScheduler(true); setShowMoreMenu(false); }}
-                    className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
-                  >
-                    <Clock className="w-4 h-4" />
-                    定时任务
-                  </button>
-                  <button
-                    onClick={() => { setShowWorkflows(true); setShowMoreMenu(false); }}
-                    className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
-                  >
-                    <GitBranch className="w-4 h-4" />
-                    工作流
-                  </button>
-                  <button
-                    onClick={() => { setShowScripts(true); setShowMoreMenu(false); }}
-                    className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
-                  >
-                    <Terminal className="w-4 h-4" />
-                    脚本管理
-                  </button>
-                  <div className="h-px bg-white/[0.06] my-1" />
-                  <button
                     onClick={() => { setShowBackupRestore(true); setShowMoreMenu(false); }}
                     className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
                   >
@@ -414,11 +372,11 @@ function App() {
                     备份恢复
                   </button>
                   <button
-                    onClick={() => { setShowEnvSelector(true); setShowMoreMenu(false); }}
+                    onClick={() => { setShowSettings(true); setShowMoreMenu(false); }}
                     className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
                   >
-                    <Globe className="w-4 h-4" />
-                    环境切换
+                    <Settings className="w-4 h-4" />
+                    环境配置
                   </button>
                 </div>
               </>
@@ -481,7 +439,6 @@ function App() {
                 >
                   <ProjectGroups
                     projects={filteredProjects}
-                    runningServices={runningServices}
                   >
                     {(project) => (
                       <SortableProjectCard
@@ -493,14 +450,14 @@ function App() {
                         onToggleExpand={() => setExpandedProjectId(expandedProjectId === project.id ? null : project.id)}
                         onEdit={() => projectForm.openEditForm(project)}
                         onDelete={() => removeProject(project.id)}
-                        onStart={() => startProject(project.id)}
-                        onStop={() => stopProject(project.id)}
-                        onRestart={() => restartProject(project.id)}
+                        onStart={() => startProject(project.id).catch(e => setGlobalError(String(e)))}
+                        onStop={() => stopProject(project.id).catch(e => setGlobalError(String(e)))}
+                        onRestart={() => restartProject(project.id).catch(e => setGlobalError(String(e)))}
                         onToggleFavorite={() => toggleProjectFavorite(project.id)}
                         onViewLogs={viewLogs}
-                        onStartService={startService}
-                        onStopService={stopService}
-                        onRestartService={restartService}
+                        onStartService={(name) => startService(name).catch(e => setGlobalError(String(e)))}
+                        onStopService={(name) => stopService(name).catch(e => setGlobalError(String(e)))}
+                        onRestartService={(name) => restartService(name).catch(e => setGlobalError(String(e)))}
                         onConfirmDelete={() => confirm({
                           title: "删除项目",
                           message: `确定要删除项目 "${project.name}" 吗？此操作不可撤销。`,
@@ -534,23 +491,6 @@ function App() {
             onDragEnd={handleServiceDragEnd}
           >
             <div className="space-y-4">
-              {/* 服务状态仪表板 */}
-              {!serviceSearch && (
-                <ServiceDashboard
-                  services={sortedServices}
-                  runningServices={runningServices}
-                  projects={projects}
-                />
-              )}
-
-              {/* 服务依赖关系图 */}
-              {!serviceSearch && (
-                <ServiceDependencyGraph
-                  services={sortedServices}
-                  runningServices={runningServices}
-                />
-              )}
-
               {/* 搜索框 */}
               <div className="relative">
                 <input
@@ -612,9 +552,9 @@ function App() {
                           }
                           onEdit={() => serviceForm.openEditForm(service)}
                           onDelete={() => deleteService(service.id)}
-                          onStart={() => startService(service.name)}
-                          onStop={() => stopService(service.name)}
-                          onRestart={() => restartService(service.name)}
+                          onStart={() => startService(service.name).catch(e => setGlobalError(String(e)))}
+                          onStop={() => stopService(service.name).catch(e => setGlobalError(String(e)))}
+                          onRestart={() => restartService(service.name).catch(e => setGlobalError(String(e)))}
                           onViewLogs={() => viewLogs(service.name)}
                           onToggleFavorite={() => toggleServiceFavorite(service.id)}
                           onConfirmDelete={() => confirm({
@@ -660,9 +600,9 @@ function App() {
                           }
                           onEdit={() => serviceForm.openEditForm(service)}
                           onDelete={() => deleteService(service.id)}
-                          onStart={() => startService(service.name)}
-                          onStop={() => stopService(service.name)}
-                          onRestart={() => restartService(service.name)}
+                          onStart={() => startService(service.name).catch(e => setGlobalError(String(e)))}
+                          onStop={() => stopService(service.name).catch(e => setGlobalError(String(e)))}
+                          onRestart={() => restartService(service.name).catch(e => setGlobalError(String(e)))}
                           onViewLogs={() => viewLogs(service.name)}
                           onToggleFavorite={() => toggleServiceFavorite(service.id)}
                           onConfirmDelete={() => confirm({
@@ -698,16 +638,12 @@ function App() {
           command={serviceForm.serviceCommand}
           path={serviceForm.servicePath}
           serviceType={serviceForm.serviceType}
-          envVars={serviceForm.serviceEnvVars}
           logPath={serviceForm.serviceLogPath}
-          dependsOn={serviceForm.serviceDependsOn}
           onNameChange={serviceForm.setServiceName}
           onCommandChange={serviceForm.setServiceCommand}
           onPathChange={serviceForm.setServicePath}
           onServiceTypeChange={serviceForm.setServiceType}
-          onEnvVarsChange={serviceForm.setServiceEnvVars}
           onLogPathChange={serviceForm.setServiceLogPath}
-          onDependsOnChange={serviceForm.setServiceDependsOn}
           onClose={serviceForm.closeForm}
           onSubmit={handleAddService}
           submitLabel="添加"
@@ -720,16 +656,12 @@ function App() {
           command={serviceForm.serviceCommand}
           path={serviceForm.servicePath}
           serviceType={serviceForm.serviceType}
-          envVars={serviceForm.serviceEnvVars}
           logPath={serviceForm.serviceLogPath}
-          dependsOn={serviceForm.serviceDependsOn}
           onNameChange={serviceForm.setServiceName}
           onCommandChange={serviceForm.setServiceCommand}
           onPathChange={serviceForm.setServicePath}
           onServiceTypeChange={serviceForm.setServiceType}
-          onEnvVarsChange={serviceForm.setServiceEnvVars}
           onLogPathChange={serviceForm.setServiceLogPath}
-          onDependsOnChange={serviceForm.setServiceDependsOn}
           onClose={serviceForm.closeForm}
           onSubmit={handleUpdateService}
           submitLabel="保存"
@@ -780,18 +712,6 @@ function App() {
         />
       )}
 
-      {/* 快速切换器 */}
-      {showQuickSwitcher && (
-        <QuickSwitcher
-          services={services}
-          projects={projects}
-          runningServices={runningServices}
-          onClose={() => setShowQuickSwitcher(false)}
-          onSwitchToServices={() => setView("services")}
-          onSwitchToProjects={() => setView("projects")}
-        />
-      )}
-
       {/* 批量操作 */}
       {showBatchOps && (
         <BatchOperations
@@ -804,74 +724,10 @@ function App() {
         />
       )}
 
-      {/* 快速项目切换器 */}
-      {showQuickProjectSwitcher && (
-        <QuickProjectSwitcher
-          projects={sortedProjects}
-          runningServices={runningServices}
-          runningProjects={runningProjects}
-          onClose={() => setShowQuickProjectSwitcher(false)}
-          onStartProject={startProject}
-          onStopProject={stopProject}
-        />
-      )}
-
-      {/* 服务健康检查 */}
-      {showHealthCheck && (
-        <ServiceHealthCheck
-          serviceName={showHealthCheck}
-          healthCheckUrl=""
-          onClose={() => setShowHealthCheck(null)}
-        />
-      )}
-
-      {/* 环境选择器 */}
-      {showEnvSelector && (
-        <ServiceEnvironmentSelector
-          currentEnv={currentEnv}
-          onClose={() => setShowEnvSelector(false)}
-          onSelect={(envId) => {
-            setCurrentEnv(envId);
-            setShowEnvSelector(false);
-          }}
-        />
-      )}
-
-      {/* 定时任务面板 */}
-      {showScheduler && (
-        <SchedulerPanel
-          tasks={scheduledTasks}
-          running={schedulerRunning}
-          onClose={() => setShowScheduler(false)}
-          onAdd={addScheduledTask}
-          onRemove={removeScheduledTask}
-          onToggle={toggleScheduledTask}
-          onStart={startScheduler}
-          onStop={stopScheduler}
-        />
-      )}
-
-      {/* 工作流面板 */}
-      {showWorkflows && (
-        <WorkflowPanel
-          workflows={workflows}
-          onClose={() => setShowWorkflows(false)}
-          onAdd={addWorkflow}
-          onRemove={removeWorkflowItem}
-          onToggle={toggleWorkflow}
-          onStart={startWorkflow}
-        />
-      )}
-
-      {/* 脚本管理面板 */}
-      {showScripts && (
-        <ScriptsPanel
-          scripts={scripts}
-          onClose={() => setShowScripts(false)}
-          onAdd={addScript}
-          onRemove={removeScriptItem}
-          onToggle={toggleScript}
-          onRun={runScript}
+      {/* 环境配置面板 */}
+      {showSettings && (
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
         />
       )}
 
