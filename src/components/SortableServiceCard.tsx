@@ -1,143 +1,184 @@
+import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { GripVertical, Play, Square, Trash2, Edit3, FolderOpen, ScrollText, Star, RotateCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { Play, Square, Trash2, Edit, GripVertical, Wrench, FileText, FolderOpen } from "lucide-react";
 import type { Service } from "../types";
+import { ServiceStatusDot } from "./ServiceStatusDot";
+import { ServiceTypeBadge } from "./ServiceTypeBadge";
+import { ActionButton } from "./ActionButton";
 
-interface Props {
+interface SortableServiceCardProps {
   service: Service;
   running: boolean;
   projectCount: number;
   onEdit: () => void;
   onDelete: () => void;
-  onStart: () => void;
-  onStop: () => void;
+  onStart: () => Promise<void>;
+  onStop: () => Promise<void>;
+  onRestart: () => Promise<void>;
   onViewLogs: () => void;
+  onToggleFavorite?: () => void;
+  onConfirmDelete?: () => Promise<boolean>;
 }
 
-export function SortableServiceCard({ service, running, projectCount, onEdit, onDelete, onStart, onStop, onViewLogs }: Props) {
+export function SortableServiceCard({
+  service,
+  running,
+  projectCount,
+  onEdit,
+  onDelete,
+  onStart,
+  onStop,
+  onRestart,
+  onViewLogs,
+  onToggleFavorite,
+  onConfirmDelete,
+}: SortableServiceCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: service.id });
+  const [loading, setLoading] = useState(false);
 
-  async function handleOpenDirectory() {
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition: isDragging ? "none" : transition,
+    zIndex: isDragging ? 50 : "auto" as const,
+  };
+
+  const handleToggle = async () => {
+    setLoading(true);
+    try {
+      if (running) {
+        await onStop();
+      } else {
+        await onStart();
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenDirectory = async () => {
     try {
       await invoke("open_directory", { path: service.path });
     } catch (e) {
       console.error("打开目录失败:", e);
     }
-  }
+  };
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+  const handleDelete = async () => {
+    if (onConfirmDelete) {
+      const confirmed = await onConfirmDelete();
+      if (confirmed) {
+        onDelete();
+      }
+    } else {
+      onDelete();
+    }
   };
 
   return (
-    <div ref={setNodeRef} style={style}>
-      <div className={`relative overflow-hidden rounded-xl border p-4 transition-all duration-300 group ${
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl border ${
         isDragging
-          ? "border-emerald-500/60 bg-[#0f1520] shadow-lg shadow-emerald-500/10 scale-105 z-10 cursor-grabbing"
-          : running
-            ? "border-emerald-500/30 bg-emerald-500/[0.03] hover:border-emerald-500/50"
-            : "border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.04]"
-      }`}>
-        {isDragging && (
-          <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 to-transparent pointer-events-none" />
-        )}
-        {running && !isDragging && (
-          <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-transparent pointer-events-none" />
-        )}
-        <div className="relative flex items-center gap-3">
-          {/* 拖拽手柄 */}
-          <button
-            className={`-ml-1.5 flex-shrink-0 p-1.5 rounded-md transition-colors ${
-              isDragging
-                ? "cursor-grabbing text-emerald-400"
-                : "cursor-grab text-gray-600 hover:text-gray-400 hover:bg-white/[0.06]"
-            }`}
-            {...attributes} {...listeners}
-          >
-            <GripVertical className="w-4 h-4" />
-          </button>
+          ? "bg-[#1a1a2e] border-blue-500/50 shadow-[0_16px_48px_rgba(0,0,0,0.5),0_0_0_1px_rgba(59,130,246,0.4)] ring-2 ring-blue-500/20"
+          : "bg-white/[0.02] hover:bg-white/[0.04] border-white/[0.06] hover:border-white/[0.1] transition-all duration-200"
+      }`}
+    >
+      {/* 拖拽手柄 */}
+      <div
+        {...attributes}
+        {...listeners}
+        className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-gray-600 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity"
+      >
+        <GripVertical className="w-3.5 h-3.5" />
+      </div>
 
-          {/* 图标 */}
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-300 ${
-            running
-              ? "bg-emerald-500/10 border border-emerald-500/20"
-              : "bg-emerald-500/10 border border-emerald-500/20"
-          }`}>
-            <Wrench className={`w-5 h-5 ${running ? "text-emerald-400" : "text-emerald-400"}`} />
-          </div>
+      {/* 状态指示灯 */}
+      <ServiceStatusDot running={running} />
 
-          {/* 内容 */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-[14px] font-semibold text-white/90">{service.name}</span>
-              {running && (
-                <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-400">
-                  运行中
-                </span>
-              )}
-              <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
-                service.startup_type === "auto"
-                  ? "bg-blue-500/15 text-blue-400"
-                  : "bg-white/[0.06] text-gray-500"
-              }`}>
-                {service.startup_type === "auto" ? "自动" : "手动"}
-              </span>
-              {projectCount > 0 && (
-                <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold bg-purple-500/15 text-purple-400">
-                  {projectCount} 个项目引用
-                </span>
-              )}
-            </div>
-            <p className="text-[12px] text-gray-500 truncate mt-1 font-mono">{service.command}</p>
-          </div>
-
-          {/* 操作按钮 */}
-          <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-            <button onClick={handleOpenDirectory}
-              className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-blue-500/20 text-gray-500 hover:text-blue-400 transition-colors"
-              title="打开目录"
-            >
-              <FolderOpen className="w-4 h-4" />
-            </button>
-            {running ? (
-              <>
-                <button onClick={onViewLogs}
-                  className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-blue-500/20 text-emerald-400 hover:text-blue-400 transition-colors"
-                  title="查看日志"
-                >
-                  <FileText className="w-4 h-4" />
-                </button>
-                <button onClick={onStop}
-                  className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-red-500/20 text-emerald-400 hover:text-red-400 transition-colors"
-                  title="强制停止"
-                >
-                  <Square className="w-4 h-4" />
-                </button>
-              </>
-            ) : (
-              <button onClick={onStart}
-                className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-emerald-500/20 text-gray-500 hover:text-emerald-400 transition-colors"
-                title="启动"
-              >
-                <Play className="w-4 h-4" />
-              </button>
-            )}
-            <button onClick={onEdit}
-              className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-white/[0.08] text-gray-500 hover:text-white transition-colors"
-              title="编辑"
-            >
-              <Edit className="w-4 h-4" />
-            </button>
-            <button onClick={onDelete}
-              className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
-              title="删除"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
+      {/* 服务信息 */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-medium text-white/90 truncate">
+            {service.name}
+          </span>
+          {service.favorite && (
+            <Star className="w-3 h-3 text-yellow-400 fill-yellow-400 flex-shrink-0" />
+          )}
+          <ServiceTypeBadge serviceType={service.service_type || "normal"} />
+          {projectCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-400">
+              {projectCount} 个项目
+            </span>
+          )}
+          {service.depends_on && service.depends_on.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400">
+              依赖 {service.depends_on.length}
+            </span>
+          )}
         </div>
+        <div className="text-[11px] text-gray-600 truncate mt-0.5 font-mono">
+          {service.command}
+        </div>
+      </div>
+
+      {/* 操作按钮 */}
+      <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {onToggleFavorite && (
+          <ActionButton
+            icon={<Star className={`w-3.5 h-3.5 ${service.favorite ? "fill-yellow-400 text-yellow-400" : ""}`} />}
+            onClick={onToggleFavorite}
+            title={service.favorite ? "取消收藏" : "收藏"}
+          />
+        )}
+        <ActionButton
+          icon={<FolderOpen className="w-3.5 h-3.5" />}
+          onClick={handleOpenDirectory}
+          title="打开目录"
+        />
+        <ActionButton
+          icon={<ScrollText className="w-3.5 h-3.5" />}
+          onClick={onViewLogs}
+          title="查看日志"
+        />
+        {running ? (
+          <>
+            <ActionButton
+              icon={<RotateCw className="w-3.5 h-3.5" />}
+              onClick={onRestart}
+              title="重启"
+              disabled={loading}
+            />
+            <ActionButton
+              icon={<Square className="w-3.5 h-3.5" />}
+              onClick={onStop}
+              title="停止"
+              variant="danger"
+              disabled={loading}
+            />
+          </>
+        ) : (
+          <ActionButton
+            icon={<Play className="w-3.5 h-3.5" />}
+            onClick={onStart}
+            title="启动"
+            variant="success"
+            disabled={loading}
+          />
+        )}
+        <ActionButton
+          icon={<Edit3 className="w-3.5 h-3.5" />}
+          onClick={onEdit}
+          title="编辑"
+        />
+        <ActionButton
+          icon={<Trash2 className="w-3.5 h-3.5" />}
+          onClick={handleDelete}
+          title="删除"
+          variant="danger"
+        />
       </div>
     </div>
   );

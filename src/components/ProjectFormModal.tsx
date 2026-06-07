@@ -20,8 +20,17 @@ interface Props {
 
 export function ProjectFormModal({ title, name, projectServices, allServices, onNameChange, onClose, onSubmit, onAddService, onRemoveService, submitLabel }: Props) {
   const [showSelect, setShowSelect] = useState(false);
+  const [nameError, setNameError] = useState("");
   const addedIds = useMemo(() => new Set(projectServices.map(s => s.id)), [projectServices]);
   const availableServices = useMemo(() => allServices.filter(s => !addedIds.has(s.id)), [allServices, addedIds]);
+
+  const handleSubmit = () => {
+    if (!name.trim()) {
+      setNameError("项目名称不能为空");
+      return;
+    }
+    onSubmit();
+  };
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0f]" style={{ top: '2.75rem' }}>
@@ -42,9 +51,10 @@ export function ProjectFormModal({ title, name, projectServices, allServices, on
             label="项目名称"
             placeholder="请输入项目名称"
             value={name}
-            onChange={onNameChange}
-            onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+            onChange={(v) => { onNameChange(v); if (nameError) setNameError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           />
+          {nameError && <p className="text-[12px] text-red-400 -mt-4">{nameError}</p>}
 
           {/* 已添加服务 */}
           <div>
@@ -90,7 +100,7 @@ export function ProjectFormModal({ title, name, projectServices, allServices, on
       </div>
 
       {/* 底部按钮 */}
-      <FormFooter onClose={onClose} onSubmit={onSubmit} submitLabel={submitLabel} />
+      <FormFooter onClose={onClose} onSubmit={handleSubmit} submitLabel={submitLabel} />
 
       {/* 选择服务弹窗 */}
       {showSelect && (

@@ -2797,6 +2797,7 @@ dependencies = [
 name = "service-deck"
 version = "1.0.0"
 dependencies = [
+ "encoding_rs",
  "serde",
  "serde_json",
  "tauri",
@@ -2804,6 +2805,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-process",
  "tauri-plugin-shell",
+ "tokio",
  "uuid",
 ]
 

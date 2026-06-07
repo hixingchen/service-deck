@@ -1,15 +1,21 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Search, X, RotateCw, Square, Play } from "lucide-react";
 
 interface Props {
   serviceName: string;
   content: string;
+  running?: boolean;
   onClose: () => void;
+  onStart?: (name: string) => Promise<void>;
+  onStop?: (name: string) => Promise<void>;
+  onRestart?: (name: string) => Promise<void>;
 }
 
-export function LogViewerPanel({ serviceName, content, onClose }: Props) {
+export function LogViewerPanel({ serviceName, content, running = false, onClose, onStart, onStop, onRestart }: Props) {
+  const [loading, setLoading] = useState(false);
   const [clearOffset, setClearOffset] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const logEndRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
 
@@ -19,7 +25,12 @@ export function LogViewerPanel({ serviceName, content, onClose }: Props) {
   };
 
   // 实际显示的内容
-  const displayContent = clearOffset !== null ? content.slice(clearOffset) : content;
+  const rawContent = clearOffset !== null ? content.slice(clearOffset) : content;
+
+  // 搜索过滤
+  const displayContent = searchTerm.trim()
+    ? rawContent.split('\n').filter(line => line.toLowerCase().includes(searchTerm.toLowerCase())).join('\n')
+    : rawContent;
 
   // 内容变化时自动滚到底部（未暂停时）
   useEffect(() => {
@@ -51,10 +62,93 @@ export function LogViewerPanel({ serviceName, content, onClose }: Props) {
           <ArrowLeft className="w-4 h-4 text-gray-400" />
         </button>
         <h2 className="ml-3 text-[15px] font-semibold text-white/90">{serviceName}</h2>
-        <span className="ml-2 text-[12px] text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">运行中</span>
+        {running && (
+          <span className="ml-2 text-[12px] text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">运行中</span>
+        )}
         <div className="flex-1" />
+        {/* 服务控制按钮 */}
+        <div className="flex items-center gap-2 mr-2">
+          {running ? (
+            <>
+              <button
+                onClick={async () => {
+                  if (!onRestart) return;
+                  setLoading(true);
+                  try {
+                    await onRestart(serviceName);
+                  } catch (e) {
+                    console.error("重启服务失败:", e);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading || !onRestart}
+                className="h-8 px-3 flex items-center gap-1.5 rounded-lg border border-white/[0.08] text-blue-400 hover:bg-blue-500/10 transition-colors text-[12px] disabled:opacity-50"
+                title="重启服务"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+                重启
+              </button>
+              <button
+                onClick={async () => {
+                  if (!onStop) return;
+                  setLoading(true);
+                  try {
+                    await onStop(serviceName);
+                  } catch (e) {
+                    console.error("停止服务失败:", e);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading || !onStop}
+                className="h-8 px-3 flex items-center gap-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors text-[12px] disabled:opacity-50"
+                title="停止服务"
+              >
+                <Square className="w-3.5 h-3.5" />
+                停止
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={async () => {
+                if (!onStart) return;
+                setLoading(true);
+                try {
+                  await onStart(serviceName);
+                } catch (e) {
+                  console.error("启动服务失败:", e);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || !onStart}
+              className="h-8 px-3 flex items-center gap-1.5 rounded-lg border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/10 transition-colors text-[12px] disabled:opacity-50"
+              title="启动服务"
+            >
+              <Play className="w-3.5 h-3.5" />
+              启动
+            </button>
+          )}
+        </div>
+        {/* 搜索框 */}
+        <div className="relative h-8 w-48">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-600" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="搜索日志..."
+            className="w-full h-full pl-8 pr-7 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[12px] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+          />
+          {searchTerm && (
+            <button onClick={() => setSearchTerm("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
         <button onClick={handleClear}
-          className="h-8 px-3 flex items-center gap-1.5 rounded-lg border border-white/[0.08] text-gray-400 hover:bg-white/[0.06] hover:text-white transition-colors text-[12px]"
+          className="h-8 px-3 ml-2 flex items-center gap-1.5 rounded-lg border border-white/[0.08] text-gray-400 hover:bg-white/[0.06] hover:text-white transition-colors text-[12px]"
         >
           清屏
         </button>

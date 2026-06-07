@@ -20,6 +20,11 @@
         "decorations": false
       }
     ],
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/icon.ico",
+      "iconAsTemplate": true
+    },
     "security": {
       "csp": null
     }

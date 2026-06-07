@@ -1,4 +1,6 @@
-export function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
+import type { ReactNode } from "react";
+
+export function EmptyState({ icon, title, subtitle }: { icon: ReactNode; title: string; subtitle: string }) {
   return (
     <div className="flex flex-col items-center justify-center h-full text-gray-500">
       <div className="w-20 h-20 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-4">

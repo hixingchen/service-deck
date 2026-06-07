@@ -1,6 +1,8 @@
+import type { KeyboardEvent } from "react";
+
 export function FormField({ label, placeholder, value, onChange, onKeyDown }: {
   label: string; placeholder: string; value: string; onChange: (v: string) => void;
-  onKeyDown?: (e: React.KeyboardEvent) => void;
+  onKeyDown?: (e: KeyboardEvent) => void;
 }) {
   return (
     <div>

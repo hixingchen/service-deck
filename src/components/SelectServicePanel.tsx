@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, X, Plus, Wrench } from "lucide-react";
+import { ArrowLeft, X, Plus, Wrench, Star } from "lucide-react";
 import type { Service } from "../types";
 
 interface Props {
@@ -8,42 +8,54 @@ interface Props {
   onClose: () => void;
 }
 
+function ServiceItem({ service, onSelect }: { service: Service; onSelect: (id: string) => void }) {
+  return (
+    <div
+      onClick={() => onSelect(service.id)}
+      className="flex items-center gap-3 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-emerald-500/30 hover:bg-emerald-500/[0.04] cursor-pointer transition-all duration-200 group"
+    >
+      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-300">
+        <Wrench className="w-5 h-5 text-emerald-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[14px] font-medium text-white/90">{service.name}</span>
+          {service.favorite && <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
+        </div>
+        <div className="text-[12px] text-gray-500 truncate font-mono mt-0.5">{service.command}</div>
+      </div>
+      <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Plus className="w-4 h-4" />
+      </div>
+    </div>
+  );
+}
+
 export function SelectServicePanel({ services, onSelect, onClose }: Props) {
   const [search, setSearch] = useState("");
 
-  const filteredBasic = useMemo(() => {
-    const basic = services.filter(s => s.category === "basic");
-    if (!search.trim()) return basic;
-    return basic.filter(s => s.name.toLowerCase().includes(search.trim().toLowerCase()));
-  }, [services, search]);
+  // 收藏服务优先排序
+  const sortedServices = useMemo(() => {
+    return [...services].sort((a, b) => {
+      if (a.favorite && !b.favorite) return -1;
+      if (!a.favorite && b.favorite) return 1;
+      return 0;
+    });
+  }, [services]);
 
-  const filteredProject = useMemo(() => {
-    const project = services.filter(s => s.category === "project");
-    if (!search.trim()) return project;
-    return project.filter(s => s.name.toLowerCase().includes(search.trim().toLowerCase()));
-  }, [services, search]);
+  const filteredFavorites = useMemo(() => {
+    const favs = sortedServices.filter(s => s.favorite);
+    if (!search.trim()) return favs;
+    return favs.filter(s => s.name.toLowerCase().includes(search.trim().toLowerCase()));
+  }, [sortedServices, search]);
 
-  const noResults = search.trim() && filteredBasic.length === 0 && filteredProject.length === 0;
+  const filteredOthers = useMemo(() => {
+    const others = sortedServices.filter(s => !s.favorite);
+    if (!search.trim()) return others;
+    return others.filter(s => s.name.toLowerCase().includes(search.trim().toLowerCase()));
+  }, [sortedServices, search]);
 
-  function ServiceItem({ service }: { service: Service }) {
-    return (
-      <div
-        onClick={() => onSelect(service.id)}
-        className="flex items-center gap-3 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-emerald-500/30 hover:bg-emerald-500/[0.04] cursor-pointer transition-all duration-200 group"
-      >
-        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-300">
-          <Wrench className="w-5 h-5 text-emerald-400" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[14px] font-medium text-white/90">{service.name}</div>
-          <div className="text-[12px] text-gray-500 truncate font-mono mt-0.5">{service.command}</div>
-        </div>
-        <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Plus className="w-4 h-4" />
-        </div>
-      </div>
-    );
-  }
+  const noResults = search.trim() && filteredFavorites.length === 0 && filteredOthers.length === 0;
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0f]">
@@ -92,30 +104,31 @@ export function SelectServicePanel({ services, onSelect, onClose }: Props) {
           </div>
         ) : (
           <div className="space-y-4">
-            {/* 基础服务 */}
-            {filteredBasic.length > 0 && (
+            {/* 收藏服务 */}
+            {filteredFavorites.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2 px-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
-                  <h3 className="text-[13px] font-semibold text-gray-400">基础服务</h3>
-                  <span className="text-[11px] text-gray-600">({filteredBasic.length})</span>
+                  <Star className="w-3.5 h-3.5 text-yellow-400" />
+                  <h3 className="text-[13px] font-semibold text-gray-400">收藏</h3>
+                  <span className="text-[11px] text-gray-600">({filteredFavorites.length})</span>
                 </div>
                 <div className="space-y-2">
-                  {filteredBasic.map((service) => <ServiceItem key={service.id} service={service} />)}
+                  {filteredFavorites.map((service) => <ServiceItem key={service.id} service={service} onSelect={onSelect} />)}
                 </div>
               </div>
             )}
 
-            {/* 项目服务 */}
-            {filteredProject.length > 0 && (
+            {/* 全部服务 */}
+            {filteredOthers.length > 0 && (
               <div>
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
-                  <h3 className="text-[13px] font-semibold text-gray-400">项目服务</h3>
-                  <span className="text-[11px] text-gray-600">({filteredProject.length})</span>
-                </div>
+                {filteredFavorites.length > 0 && (
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <h3 className="text-[13px] font-semibold text-gray-400">全部服务</h3>
+                    <span className="text-[11px] text-gray-600">({filteredOthers.length})</span>
+                  </div>
+                )}
                 <div className="space-y-2">
-                  {filteredProject.map((service) => <ServiceItem key={service.id} service={service} />)}
+                  {filteredOthers.map((service) => <ServiceItem key={service.id} service={service} onSelect={onSelect} />)}
                 </div>
               </div>
             )}

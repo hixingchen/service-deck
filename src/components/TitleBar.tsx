@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Rocket, Minus, X, Maximize2, Copy } from "lucide-react";
 
 export function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false);
-  const appWindow = getCurrentWindow();
+  const appWindowRef = useRef(getCurrentWindow());
+  const appWindow = appWindowRef.current;
 
   useEffect(() => {
     appWindow.isMaximized().then(setIsMaximized);
@@ -12,7 +13,7 @@ export function TitleBar() {
       appWindow.isMaximized().then(setIsMaximized);
     });
     return () => { unlisten.then(fn => fn()); };
-  }, []);
+  }, [appWindow]);
 
   return (
     <header data-tauri-drag-region className="h-11 flex items-center px-4 bg-[#0a0a0f] select-none shrink-0 border-b border-white/[0.06]">
