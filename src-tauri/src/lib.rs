@@ -54,12 +54,6 @@ fn default_service_type() -> String {
     "normal".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceStatus {
-    pub name: String,
-    pub status: String,
-    pub pid: Option<u32>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
@@ -157,6 +151,54 @@ fn load_config(app: &AppHandle) -> AppConfig {
     }
 
     AppConfig::default()
+}
+
+// 从文件末尾读取最后 N 行（避免大文件 OOM）
+fn read_file_tail(path: &PathBuf, n: usize) -> Result<String, String> {
+    use std::io::{Seek, SeekFrom, Read};
+
+    let mut file = fs::File::open(path).map_err(|e| format!("打开日志文件失败: {}", e))?;
+    let metadata = file.metadata().map_err(|e| format!("读取文件元数据失败: {}", e))?;
+    let file_size = metadata.len();
+
+    if file_size == 0 {
+        return Ok(String::new());
+    }
+
+    // 小文件（< 1MB）直接读取
+    if file_size < 1024 * 1024 {
+        let content = fs::read_to_string(path).map_err(|e| format!("读取日志失败: {}", e))?;
+        let lines: Vec<&str> = content.lines().collect();
+        let start = if lines.len() > n { lines.len() - n } else { 0 };
+        return Ok(lines[start..].join("\n"));
+    }
+
+    // 大文件：从末尾向前按块读取，只保留最后一个块的数据
+    let chunk_size: u64 = 8192;
+    let mut pos = file_size;
+    let mut tail_buf: Vec<u8> = Vec::new();
+    let mut found_lines = 0;
+
+    while pos > 0 && found_lines <= n {
+        let read_size = chunk_size.min(pos);
+        pos -= read_size;
+        file.seek(SeekFrom::Start(pos)).map_err(|e| format!("seek 失败: {}", e))?;
+        let mut chunk = vec![0u8; read_size as usize];
+        file.read_exact(&mut chunk).map_err(|e| format!("读取失败: {}", e))?;
+
+        // 统计本块中的换行符数量
+        found_lines += chunk.iter().filter(|&&b| b == b'\n').count();
+
+        // 将本块放在前面（因为我们是从后往前读的）
+        chunk.extend_from_slice(&tail_buf);
+        tail_buf = chunk;
+    }
+
+    // 从 tail_buf 中提取最后 n 行
+    let content = String::from_utf8_lossy(&tail_buf);
+    let lines: Vec<&str> = content.lines().collect();
+    let start = if lines.len() > n { lines.len() - n } else { 0 };
+    Ok(lines[start..].join("\n"))
 }
 
 fn save_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -605,19 +647,12 @@ fn apply_env_settings(cmd: &mut Command, settings: &AppSettings, service_env: &H
     }
 }
 
-// 给 Maven 命令追加 settings 和 local-repo 参数（暂未启用，避免兼容性问题）
-fn enhance_maven_command(command: &str, _settings: &AppSettings) -> String {
-    command.to_string()
-}
-
 fn spawn_with_realtime_log(_app: &AppHandle, service: &Service, service_name: &str, state: &State<AppState>) -> Result<Child, String> {
     // 读取环境配置
     let settings = state.settings.lock().unwrap().clone();
 
     // 智能转换 Maven 命令
     let smart_command = smart_convert_maven_command(&service.command, &service.path);
-    // 给 Maven 命令追加 settings 和 local-repo 参数
-    let smart_command = enhance_maven_command(&smart_command, &settings);
     eprintln!("[spawn] 服务: {}, 原始命令: {}, 转换后: {}, 工作目录: {}", service_name, service.command, smart_command, service.path);
 
     // 如果用户指定了日志路径，直接重定向到文件
@@ -811,42 +846,13 @@ fn start_service(app: AppHandle, state: State<AppState>, service_name: String, c
         service.clone()
     };
 
-    // 释放所有锁，避免同步测试期间阻塞
+    // 释放所有锁，避免阻塞前端轮询
     drop(detected_pids);
     drop(processes);
     drop(services);
 
-    // 智能转换命令
-    let smart_cmd = smart_convert_maven_command(&actual_service.command, &actual_service.path);
-    eprintln!("[start_service] 原始: {} → 转换: {} → 路径: {}", actual_service.command, smart_cmd, actual_service.path);
-
-    // 直接用同步方式执行，捕获完整输出
-    let settings = state.settings.lock().unwrap().clone();
-    let mut test_cmd = build_command(&smart_cmd, &actual_service.path, &settings, &actual_service.env_vars);
-
-    let test_handle = std::thread::spawn(move || test_cmd.output());
-
-    // 最多等 10 秒
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let mut test_result = None;
-    while std::time::Instant::now() < deadline {
-        if test_handle.is_finished() {
-            test_result = Some(test_handle.join().unwrap());
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    if let Some(Ok(output)) = test_result {
-        let code = output.status.code().unwrap_or(-1);
-        let all_output = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        eprintln!("[start_service] 退出码: {}, 输出: {}", code, all_output);
-        if !output.status.success() {
-            return Err(format!("启动失败（退出码: {}）\n命令: {}\n\n{}", code, smart_cmd, all_output));
-        }
-    }
-
-    // 超时 = 进程在运行 = 启动成功，用异步方式继续
+    // 直接正式启动，捕获实时日志（不做预测试，避免阻塞 UI）
+    // 启动失败会通过日志和状态指示灯反馈给用户
     let child = spawn_with_realtime_log(&app, &actual_service, &service_name, &state)?;
     eprintln!("[start_service] 服务 {} 启动成功 (PID: {})", service_name, child.id());
     let mut processes = state.processes.lock().unwrap();
@@ -863,10 +869,16 @@ fn start_project(app: AppHandle, state: State<AppState>, project_id: String) -> 
 
     let project = projects.get(&project_id).ok_or("项目不存在")?;
 
-    // 收集需要启动的服务ID（排除已在 processes 或 detected_pids 中的服务）
-    let start_ids: Vec<String> = project.services.iter()
+    // 收集需要启动的服务名称（排除已在 processes 或 detected_pids 中的服务）
+    // 注意：项目内嵌的服务是克隆副本，必须用 name 匹配全局服务来获取最新配置
+    let start_names: Vec<String> = project.services.iter()
         .filter(|svc| !processes.contains_key(&svc.name) && !detected_pids.contains_key(&svc.name))
-        .map(|svc| svc.id.clone())
+        .map(|svc| svc.name.clone())
+        .collect();
+
+    // 用名称收集对应的全局服务 ID，用于依赖排序
+    let start_ids: Vec<String> = start_names.iter()
+        .filter_map(|name| services.values().find(|s| s.name == *name).map(|s| s.id.clone()))
         .collect();
 
     // 解析依赖顺序（拓扑排序）
@@ -959,14 +971,23 @@ fn batch_start_services(app: AppHandle, state: State<AppState>, service_names: V
 #[tauri::command]
 fn batch_stop_services(state: State<AppState>, service_names: Vec<String>) -> Result<Vec<String>, String> {
     let mut processes = state.processes.lock().unwrap();
+    let mut detected_pids = state.detected_pids.lock().unwrap();
 
     let mut stopped = Vec::new();
 
     for service_name in &service_names {
+        // 先从 processes 中停止（程序启动的进程）
         if let Some(mut process) = processes.remove(service_name) {
             kill_process_tree(process.id());
             let _ = process.wait();
             stopped.push(service_name.clone());
+        }
+        // 再从 detected_pids 中停止（手动启动或之前启动的进程）
+        if let Some(pid) = detected_pids.remove(service_name) {
+            kill_process_tree(pid);
+            if !stopped.contains(service_name) {
+                stopped.push(service_name.clone());
+            }
         }
     }
 
@@ -978,19 +999,17 @@ fn get_service_logs(_app: AppHandle, state: State<AppState>, service_name: Strin
     let services = state.services.lock().unwrap();
 
     let service = services.values().find(|s| s.name == service_name).ok_or("服务不存在")?;
+    let log_path = service.log_path.clone();
+    drop(services); // 释放锁，避免读文件期间阻塞其他操作
 
-    // 如果用户指定了日志路径，从文件读取
-    if !service.log_path.is_empty() {
-        let log_file_path = PathBuf::from(&service.log_path);
+    // 如果用户指定了日志路径，从文件读取（只读最后 N 行，避免大文件 OOM）
+    if !log_path.is_empty() {
+        let log_file_path = PathBuf::from(&log_path);
         if !log_file_path.exists() {
             return Ok(String::new());
         }
-        let content = fs::read_to_string(&log_file_path)
-            .map_err(|e| format!("读取日志失败: {}", e))?;
-        let lines = content.lines().collect::<Vec<_>>();
         let tail = tail_lines.unwrap_or(100);
-        let start = if lines.len() > tail { lines.len() - tail } else { 0 };
-        return Ok(lines[start..].join("\n"));
+        return read_file_tail(&log_file_path, tail);
     }
 
     // 否则从内存缓冲区读取
@@ -1338,31 +1357,6 @@ fn get_running_services(state: State<AppState>) -> Vec<String> {
     running.into_iter().collect()
 }
 
-// 手动触发检测运行中的服务（用于调试）
-#[tauri::command]
-fn detect_running_services(state: State<AppState>) -> Vec<String> {
-    let services = state.services.lock().unwrap();
-    let mut detected_pids = state.detected_pids.lock().unwrap();
-
-    // 通过命令行匹配检测
-    let cmd_detected = detect_running_services_by_command(&services);
-    let mut result = Vec::new();
-
-    for (service_name, pid) in cmd_detected {
-        if !detected_pids.contains_key(&service_name) {
-            detected_pids.insert(service_name.clone(), pid);
-            result.push(format!("{} (PID: {})", service_name, pid));
-        }
-    }
-
-    // 返回当前所有检测到的服务
-    let all_detected: Vec<String> = detected_pids.iter()
-        .map(|(name, pid)| format!("{} (PID: {})", name, pid))
-        .collect();
-
-    all_detected
-}
-
 #[tauri::command]
 fn stop_service(state: State<AppState>, service_name: String) -> Result<(), String> {
     let mut processes = state.processes.lock().unwrap();
@@ -1402,65 +1396,6 @@ fn restart_service(app: AppHandle, state: State<AppState>, service_name: String)
     start_service(app, state, service_name, None)
 }
 
-#[tauri::command]
-fn get_service_status(state: State<AppState>, service_name: String) -> ServiceStatus {
-    let processes = state.processes.lock().unwrap();
-
-    if let Some(process) = processes.get(&service_name) {
-        ServiceStatus {
-            name: service_name,
-            status: "running".to_string(),
-            pid: Some(process.id()),
-        }
-    } else {
-        ServiceStatus {
-            name: service_name,
-            status: "stopped".to_string(),
-            pid: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthCheckResult {
-    pub service_name: String,
-    pub is_healthy: bool,
-    pub message: String,
-    pub response_time_ms: u64,
-}
-
-#[tauri::command]
-fn check_service_health(state: State<AppState>, service_name: String, health_check_url: Option<String>) -> HealthCheckResult {
-    let processes = state.processes.lock().unwrap();
-
-    // 检查进程是否在运行
-    if let Some(process) = processes.get(&service_name) {
-        let pid = process.id();
-        // 如果配置了健康检查 URL，显示 URL 信息
-        let message = if let Some(ref url) = health_check_url {
-            if !url.is_empty() {
-                format!("运行中 (PID: {}) - 检查地址: {}", pid, url)
-            } else {
-                format!("运行中 (PID: {})", pid)
-            }
-        } else {
-            format!("运行中 (PID: {})", pid)
-        };
-        HealthCheckResult {
-            service_name,
-            is_healthy: true,
-            message,
-            response_time_ms: 0,
-        }
-    } else {
-        HealthCheckResult {
-            service_name,
-            is_healthy: false,
-            message: "未运行".to_string(),
-            response_time_ms: 0,
-        }
-    }
-}
 
 #[derive(Serialize, Deserialize)]
 struct ConfigBundle {
@@ -1592,29 +1527,6 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: AppSettings) 
         *s = settings;
     }
     save_all(&app, &state)
-}
-
-#[tauri::command]
-fn open_terminal(path: String) -> Result<(), String> {
-    let path = PathBuf::from(&path);
-    if !path.exists() {
-        return Err("目录不存在".to_string());
-    }
-    #[cfg(windows)]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "cmd", "/K", "cd", "/d", path.to_str().unwrap_or("")])
-            .spawn()
-            .map_err(|e| format!("打开终端失败: {}", e))?;
-    }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("x-terminal-emulator")
-            .current_dir(&path)
-            .spawn()
-            .map_err(|e| format!("打开终端失败: {}", e))?;
-    }
-    Ok(())
 }
 
 #[tauri::command]
@@ -2021,13 +1933,10 @@ pub fn run() {
             stop_project,
             restart_project,
             get_running_services,
-            detect_running_services,
             get_service_logs,
             get_log_file_size,
             set_log_viewer_active,
             clear_service_logs,
-            get_service_status,
-            check_service_health,
             batch_start_services,
             batch_stop_services,
             // 配置管理
@@ -2035,7 +1944,6 @@ pub fn run() {
             export_config,
             import_config,
             open_directory,
-            open_terminal,
             get_available_commands,
             execute_command,
             // 设置

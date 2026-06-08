@@ -15,49 +15,44 @@
 
 ## 简介
 
-Service Deck 是一个 Windows 桌面应用，用于统一管理本地开发环境中的各种服务。你可以将散落在各处的服务（Node.js、Maven、数据库、自定义脚本等）集中管理，通过项目分组实现一键批量启停。
-
-**核心理念：工具适应项目，而不是项目适应工具。**
+Service Deck 是一个 Windows 桌面应用，用于统一管理本地开发环境中的各种服务。将散落各处的服务（Node.js、Maven、数据库、自定义脚本等）集中管理，通过项目分组实现一键批量启停。
 
 ## 功能特性
 
 ### 服务管理
-- **服务 CRUD** — 添加、编辑、删除服务
-- **服务类型** — 支持普通命令、npm、Maven 三种类型
-- **一键操作** — 启动、停止、重启服务
-- **收藏服务** — 收藏常用服务，置顶显示
-- **拖拽排序** — 拖拽调整服务显示顺序
-- **批量操作** — 选择多个服务批量启动/停止/重启
+- 服务增删改查，支持普通命令、npm、Maven 三种类型
+- 一键启动 / 停止 / 重启
+- 收藏置顶、拖拽排序
+- 批量启动 / 停止 / 重启
 
 ### 项目管理
-- **项目分组** — 将多个服务归入一个项目
-- **项目收藏** — 收藏常用项目，置顶显示
-- **一键启停** — 启动/停止项目时自动操作所有关联服务
-- **拖拽排序** — 拖拽调整项目和服务顺序
+- 将多个服务归入一个项目，一键启停整个项目
+- 项目收藏置顶、拖拽排序
+- 项目内服务独立启停
 
 ### 智能命令终端
-- **npm 服务** — 自动读取 `package.json` 中的 scripts 命令
-- **Maven 服务** — 自动检测多模块项目、profiles，提供智能命令建议
-- **实时输出** — 命令执行时实时显示输出，支持 ANSI 颜色
-- **快速命令** — 内置 `npm install`、`mvn install` 等常用命令
+- npm 类型自动读取 `package.json` 中的 scripts
+- Maven 类型自动检测多模块项目、profiles，提供智能命令建议
+- 自定义命令输入，实时输出，支持 ANSI 颜色
 
 ### 日志查看
-- **实时日志** — 服务运行时实时捕获 stdout/stderr
-- **内存缓冲** — 日志存储在内存中，无需文件
-- **搜索过滤** — 支持关键词搜索日志内容
-- **暂停/继续** — 暂停自动滚动，方便查看历史日志
-- **清屏** — 清除当前日志显示
+- 实时捕获 stdout/stderr，内存缓冲
+- 关键词搜索、暂停滚动、清屏
+- 服务控制（启动 / 停止 / 重启）集成在日志面板内
+
+### 环境配置
+- 配置 JAVA_HOME、MAVEN_HOME 等环境变量
+- 配置 Maven settings.xml 和本地仓库路径
+- 类似 IDEA 的 Project Structure 设置
 
 ### 备份恢复
-- **配置导出** — 导出所有服务和项目配置到 JSON 文件
-- **配置导入** — 从 JSON 文件导入配置
-- **一键备份** — 快速备份当前配置
+- 导出 / 导入所有服务和项目配置（JSON 格式）
 
 ### 系统功能
-- **自定义标题栏** — 无边框窗口，现代 UI 风格
-- **系统托盘** — 最小化到托盘，后台运行
-- **自动检测** — 启动时自动检测之前运行中的服务
-- **配置持久化** — 所有配置自动保存到 `config.json`
+- 无边框窗口 + 自定义标题栏
+- 系统托盘，最小化到后台运行
+- 启动时自动检测之前运行中的服务（PID 持久化）
+- 配置自动保存到 `config.json`
 
 ## 快速开始
 
@@ -66,19 +61,17 @@ Service Deck 是一个 Windows 桌面应用，用于统一管理本地开发环�
 - Windows 10/11 (64-bit)
 - Node.js >= 18
 - pnpm
-- Rust (最新稳定版)
+- Rust（最新稳定版）
 
 ### 安装与运行
 
 ```bash
-# 克隆项目
 git clone https://github.com/hixingchen/service-deck.git
 cd service-deck
 
-# 安装依赖
 pnpm install
 
-# 启动开发模式
+# 开发模式
 pnpm dev
 
 # 构建生产版本
@@ -87,40 +80,41 @@ pnpm build
 
 ### 添加服务
 
-1. 点击服务列表上方的「+」按钮
-2. 填写服务信息：
-   - **服务名称** — 显示名称，如 `前端开发服务器`
-   - **服务类型** — 选择 `普通`、`npm` 或 `Maven`
-   - **工作目录** — 服务所在目录
-   - **启动命令** — 执行的命令（npm/Maven 类型会自动读取可用命令）
+1. 点击「添加服务」
+2. 填写信息：
+   - **服务名称** — 显示名称
+   - **服务类型** — 普通 / npm / Maven
+   - **工作目录** — 服务所在目录（可浏览选择）
+   - **启动命令** — npm / Maven 类型会自动读取可用命令
 3. 点击「添加」
 
 ### 创建项目
 
-1. 切换到项目列表视图
-2. 点击「+」按钮创建项目
-3. 为项目添加关联的服务
-4. 点击项目卡片的「启动」按钮，一键启动所有服务
+1. 切换到「项目列表」视图
+2. 点击「添加项目」，填写名称
+3. 为项目关联服务
+4. 点击项目卡片的启动按钮，一键启动所有服务
 
 ## 项目结构
 
 ```
 service-deck/
 ├── src/                          # 前端 (React + TypeScript)
-│   ├── App.tsx                   # 主应用
+│   ├── App.tsx                   # 主应用组件
 │   ├── types.ts                  # 类型定义
 │   ├── components/               # UI 组件
-│   │   ├── SortableServiceCard.tsx   # 服务卡片
-│   │   ├── SortableProjectCard.tsx   # 项目卡片
-│   │   ├── CommandTerminal.tsx       # 命令终端
-│   │   ├── LogViewerPanel.tsx        # 日志查看器
-│   │   ├── BackupRestorePanel.tsx    # 备份恢复
+│   │   ├── SortableServiceCard.tsx
+│   │   ├── SortableProjectCard.tsx
+│   │   ├── CommandTerminal.tsx
+│   │   ├── LogViewerPanel.tsx
+│   │   ├── BackupRestorePanel.tsx
+│   │   ├── SettingsPanel.tsx
 │   │   └── ...
 │   └── hooks/                    # 自定义 Hooks
-│       ├── useServices.ts        # 服务管理
-│       ├── useProjects.ts        # 项目管理
-│       ├── useLogs.ts            # 日志管理
-│       ├── useDnD.ts             # 拖拽排序
+│       ├── useServices.ts
+│       ├── useProjects.ts
+│       ├── useLogs.ts
+│       ├── useDnD.ts
 │       └── ...
 ├── src-tauri/                    # 后端 (Rust + Tauri 2)
 │   └── src/
@@ -145,7 +139,7 @@ service-deck/
 
 ## 配置文件
 
-配置文件位于可执行文件同目录下的 `config.json`，格式如下：
+配置文件位于可执行文件同目录下的 `config.json`：
 
 ```json
 {
@@ -159,7 +153,10 @@ service-deck/
       "sort_index": 0,
       "favorite": false,
       "log_path": "",
-      "env_vars": {}
+      "env_vars": {},
+      "depends_on": [],
+      "health_check_url": "",
+      "health_check_interval": 0
     }
   ],
   "projects": [
@@ -174,8 +171,13 @@ service-deck/
   "settings": {
     "minimize_to_tray": true,
     "show_notifications": true,
-    "theme": ""
-  }
+    "theme": "",
+    "java_home": "",
+    "maven_home": "",
+    "maven_settings": "",
+    "maven_local_repo": ""
+  },
+  "running_pids": {}
 }
 ```
 
@@ -189,12 +191,4 @@ pnpm typecheck    # TypeScript 类型检查
 
 ## License
 
-本项目基于 MIT 协议开源 - 详见 [LICENSE](LICENSE) 文件
-
----
-
-<div align="center">
-
-**如果觉得有用，请给个 ⭐ Star 支持一下！**
-
-</div>
+MIT - 详见 [LICENSE](LICENSE)

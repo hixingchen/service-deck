@@ -35,7 +35,11 @@ export function CommandTerminal({ serviceName, servicePath, serviceType, onClose
   useEffect(() => {
     const unlistenOutput = listen("command-output", (event) => {
       const payload = event.payload as { type: string; line: string };
-      setOutput(prev => [...prev, { type: payload.type, text: payload.line }]);
+      setOutput(prev => {
+        const next = [...prev, { type: payload.type, text: payload.line }];
+        // 限制最大 5000 行，防止内存持续增长
+        return next.length > 5000 ? next.slice(next.length - 5000) : next;
+      });
     });
 
     const unlistenFinished = listen("command-finished", (event) => {

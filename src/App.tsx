@@ -81,6 +81,13 @@ function App() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [configPath, setConfigPath] = useState("");
 
+  // 错误提示 5 秒后自动消失
+  useEffect(() => {
+    if (!globalError) return;
+    const timer = setTimeout(() => setGlobalError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [globalError]);
+
   // 加载所有数据
   const loadData = useCallback(async () => {
     try {
@@ -147,6 +154,17 @@ function App() {
     const q = serviceSearch.trim().toLowerCase();
     return sortedServices.filter((s) => s.name.toLowerCase().includes(q));
   }, [sortedServices, serviceSearch]);
+
+  // 预计算每个服务所属项目数量（避免在列表渲染中重复计算）
+  const serviceProjectCount = useMemo(() => {
+    const countMap = new Map<string, number>();
+    for (const p of projects) {
+      for (const s of p.services) {
+        countMap.set(s.id, (countMap.get(s.id) || 0) + 1);
+      }
+    }
+    return countMap;
+  }, [projects]);
 
   // 拖拽处理（使用过滤后的列表，确保索引与 SortableContext 一致）
   const { sensors, handleServiceDragEnd, handleProjectDragEnd } = useDnD(
@@ -545,11 +563,7 @@ function App() {
                           key={service.id}
                           service={service}
                           running={runningServices.includes(service.name)}
-                          projectCount={
-                            projects.filter((p) =>
-                              p.services.some((s) => s.id === service.id)
-                            ).length
-                          }
+                          projectCount={serviceProjectCount.get(service.id) || 0}
                           onEdit={() => serviceForm.openEditForm(service)}
                           onDelete={() => deleteService(service.id)}
                           onStart={() => startService(service.name).catch(e => setGlobalError(String(e)))}
@@ -593,11 +607,7 @@ function App() {
                           key={service.id}
                           service={service}
                           running={runningServices.includes(service.name)}
-                          projectCount={
-                            projects.filter((p) =>
-                              p.services.some((s) => s.id === service.id)
-                            ).length
-                          }
+                          projectCount={serviceProjectCount.get(service.id) || 0}
                           onEdit={() => serviceForm.openEditForm(service)}
                           onDelete={() => deleteService(service.id)}
                           onStart={() => startService(service.name).catch(e => setGlobalError(String(e)))}

@@ -7,9 +7,6 @@ export interface Service {
   env_vars: Record<string, string>;
   log_path: string;
   service_type: string;
-  cli_path: string;
-  health_check_url: string;
-  health_check_interval: number;
   favorite: boolean;
 }
 
