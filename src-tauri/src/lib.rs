@@ -57,22 +57,14 @@ fn default_service_type() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
-    // 预留设置字段，路径已固定为exe同级config目录
     #[serde(default)]
-    pub minimize_to_tray: bool,       // 是否最小化到托盘
+    pub minimize_to_tray: bool,
     #[serde(default)]
-    pub show_notifications: bool,     // 是否显示通知
+    pub show_notifications: bool,
     #[serde(default)]
-    pub theme: String,                // 主题设置
-    // 环境配置（类似 IDEA）
+    pub theme: String,
     #[serde(default)]
     pub java_home: String,            // JDK 路径，如 D:\software\commonBag\jdk\jdk8
-    #[serde(default)]
-    pub maven_home: String,           // Maven 路径，如 D:\software\commonBag\apache-maven-3.8.6
-    #[serde(default)]
-    pub maven_settings: String,       // Maven settings.xml 路径
-    #[serde(default)]
-    pub maven_local_repo: String,     // Maven 本地仓库路径
 }
 
 struct AppState {
@@ -627,23 +619,12 @@ fn apply_env_settings(cmd: &mut Command, settings: &AppSettings, service_env: &H
     }
     // 应用服务级环境变量
     cmd.envs(service_env);
-    // 应用全局环境配置
+    // 应用 JAVA_HOME
     if !settings.java_home.is_empty() {
         cmd.env("JAVA_HOME", &settings.java_home);
-        // 将 java/bin 加入 PATH
         let java_bin = PathBuf::from(&settings.java_home).join("bin");
         let path = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", format!("{};{}", java_bin.display(), path));
-    }
-    if !settings.maven_home.is_empty() {
-        cmd.env("MAVEN_HOME", &settings.maven_home);
-        // 将 maven/bin 加入 PATH
-        let maven_bin = PathBuf::from(&settings.maven_home).join("bin");
-        let path = cmd.get_envs()
-            .find(|(k, _)| k.to_str() == Some("PATH"))
-            .and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()))
-            .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
-        cmd.env("PATH", format!("{};{}", maven_bin.display(), path));
     }
 }
 
@@ -1701,13 +1682,6 @@ async fn execute_command(app: AppHandle, state: State<'_, AppState>, command: St
         let java_bin = PathBuf::from(&settings.java_home).join("bin").display().to_string();
         if let Some((_, path)) = envs.iter_mut().find(|(k, _)| k == "PATH") {
             *path = format!("{};{}", java_bin, path);
-        }
-    }
-    if !settings.maven_home.is_empty() {
-        envs.push(("MAVEN_HOME".to_string(), settings.maven_home.clone()));
-        let maven_bin = PathBuf::from(&settings.maven_home).join("bin").display().to_string();
-        if let Some((_, path)) = envs.iter_mut().find(|(k, _)| k == "PATH") {
-            *path = format!("{};{}", maven_bin, path);
         }
     }
 

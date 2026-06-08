@@ -41,9 +41,7 @@ Service Deck 是一个 Windows 桌面应用，用于统一管理本地开发环�
 - 服务控制（启动 / 停止 / 重启）集成在日志面板内
 
 ### 环境配置
-- 配置 JAVA_HOME、MAVEN_HOME 等环境变量
-- 配置 Maven settings.xml 和本地仓库路径
-- 类似 IDEA 的 Project Structure 设置
+- 配置 JAVA_HOME（JDK 路径），所有 Java / Maven 命令使用指定 JDK
 
 ### 备份恢复
 - 导出 / 导入所有服务和项目配置（JSON 格式）
@@ -172,10 +170,7 @@ service-deck/
     "minimize_to_tray": true,
     "show_notifications": true,
     "theme": "",
-    "java_home": "",
-    "maven_home": "",
-    "maven_settings": "",
-    "maven_local_repo": ""
+    "java_home": ""
   },
   "running_pids": {}
 }

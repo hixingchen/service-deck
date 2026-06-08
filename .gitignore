@@ -25,3 +25,7 @@ src-tauri/target
 
 # Tauri
 src-tauri/WixTools
+src-tauri/gen
+
+# Dev notes
+TASKS.md
