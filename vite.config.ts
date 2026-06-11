@@ -20,4 +20,18 @@ export default defineConfig({
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
   },
+  // 预构建依赖，加速 dev 模式首次加载
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "lucide-react",
+      "@dnd-kit/core",
+      "@dnd-kit/sortable",
+      "@dnd-kit/utilities",
+      "@tauri-apps/api",
+      "@tauri-apps/plugin-dialog",
+      "@tauri-apps/plugin-process",
+    ],
+  },
 });

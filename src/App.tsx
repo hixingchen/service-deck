@@ -37,6 +37,7 @@ function App() {
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [serviceSearch, setServiceSearch] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
 
   // 使用自定义 hooks
   const {
@@ -103,6 +104,8 @@ function App() {
       if (c) setConfigPath(c);
     } catch (e) {
       console.error("加载数据失败:", e);
+    } finally {
+      setIsLoading(false);
     }
   }, [setServices, setProjects, setRunningServices]);
 
@@ -111,18 +114,40 @@ function App() {
     loadData();
   }, [loadData]);
 
-  // 定时轮询运行状态
+  // 定时轮询运行状态（无运行服务时降低频率）
   useEffect(() => {
-    const timer = setInterval(async () => {
+    let active = true;
+
+    const poll = async () => {
+      if (!active) return;
       try {
         const r = await invoke<string[]>("get_running_services");
+        if (!active) return;
         setRunningServices(r);
       } catch (e) {
         console.error("轮询运行状态失败:", e);
       }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [setRunningServices]);
+    };
+
+    // 有运行服务时 2 秒轮询，否则 10 秒
+    const getInterval = () => runningServices.length > 0 ? 2000 : 10000;
+
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(async () => {
+        await poll();
+        schedule();
+      }, getInterval());
+    };
+
+    // 首次立即轮询
+    poll().then(() => schedule());
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [setRunningServices, runningServices.length]);
 
   // 排序后的列表（收藏优先）
   const sortedProjects = useMemo(() => {
@@ -405,7 +430,11 @@ function App() {
 
       {/* 内容区域 */}
       <main className="flex-1 p-4 overflow-auto">
-        {view === "projects" ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+          </div>
+        ) : view === "projects" ? (
           sortedProjects.length === 0 && projectSearch === "" ? (
             <EmptyState
               icon={<FolderOpen className="w-12 h-12" />}
