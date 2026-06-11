@@ -785,6 +785,8 @@ fn build_command(smart_cmd: &str, work_dir: &str, settings: &AppSettings, env_va
         let mut cmd = Command::new("cmd");
         cmd.args(["/C", &full]);
         cmd.current_dir(work_dir);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
         apply_env_settings(&mut cmd, settings, env_vars);
         cmd
     }
@@ -1053,18 +1055,21 @@ fn clear_service_logs(state: State<AppState>, service_name: String) -> Result<()
 
 fn kill_process_tree(pid: u32) {
     // 先用 taskkill /T /F 杀掉整个进程树（包括子进程）
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .output();
+    let mut cmd = Command::new("taskkill");
+    cmd.args(["/T", "/F", "/PID", &pid.to_string()]);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let _ = cmd.output();
 
     // 额外检查：用 wmic 查找并杀掉该 PID 的所有子进程
     // 因为某些服务（如 Java、Redis）会创建独立的进程树
     #[cfg(windows)]
     {
         // 查找以该 PID 为父进程的所有子进程
-        if let Ok(output) = Command::new("wmic")
-            .args(["process", "where", &format!("ParentProcessId={}", pid), "get", "ProcessId"])
-            .output()
+        let mut wmic_cmd = Command::new("wmic");
+        wmic_cmd.args(["process", "where", &format!("ParentProcessId={}", pid), "get", "ProcessId"]);
+        wmic_cmd.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = wmic_cmd.output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
@@ -1072,9 +1077,10 @@ fn kill_process_tree(pid: u32) {
                 if let Ok(child_pid) = trimmed.parse::<u32>() {
                     if child_pid > 0 {
                         // 递归杀掉子进程
-                        let _ = Command::new("taskkill")
-                            .args(["/T", "/F", "/PID", &child_pid.to_string()])
-                            .output();
+                        let mut kill_cmd = Command::new("taskkill");
+                        kill_cmd.args(["/T", "/F", "/PID", &child_pid.to_string()]);
+                        kill_cmd.creation_flags(CREATE_NO_WINDOW);
+                        let _ = kill_cmd.output();
                     }
                 }
             }
@@ -1160,9 +1166,10 @@ fn detect_running_services_by_command(services: &HashMap<String, Service>) -> Ha
     let mut result: HashMap<String, u32> = HashMap::new();
 
     // 使用 wmic 获取所有进程的命令行
-    let output = Command::new("wmic")
-        .args(["process", "get", "CommandLine,ProcessId", "/format:csv"])
-        .output();
+    let mut cmd = Command::new("wmic");
+    cmd.args(["process", "get", "CommandLine,ProcessId", "/format:csv"]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.output();
 
     let stdout = match output {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -1771,6 +1778,15 @@ async fn execute_command(app: AppHandle, state: State<'_, AppState>, command: St
     Ok(())
 }
 
+// 前端加载完成后显示窗口
+#[tauri::command]
+fn show_main_window(app: AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 pub fn run() {
     tauri::Builder::default()
@@ -1880,11 +1896,9 @@ pub fn run() {
             };
             app.manage(app_state);
 
-            // 设置窗口背景色为深色，避免 WebView2 初始化时白屏闪烁
+            // 设置窗口背景色为深色，与 splash screen 背景一致，避免白屏闪烁
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_background_color(Some(tauri::window::Color(10, 10, 15, 255)));
-                let _ = window.show();
-                let _ = window.set_focus();
             }
 
             // 后台线程：通过命令行匹配检测手动启动的服务（wmic 较慢）
@@ -1906,6 +1920,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // 窗口管理
+            show_main_window,
             // 服务管理
             get_services,
             add_service,
