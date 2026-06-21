@@ -43,8 +43,6 @@ export function useProjectForm() {
     newProjectServices,
     setProjectName,
     setEditingProject,
-    setNewProjectServices,
-    resetForm,
     openAddForm,
     openEditForm,
     closeForm,

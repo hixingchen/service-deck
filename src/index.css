@@ -8,6 +8,7 @@
     --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
+    --card-hover: 240 4.8% 95.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
     --primary: 210 100% 56%;
@@ -21,31 +22,36 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
+    --border-subtle: 240 5.9% 85%;
     --input: 240 5.9% 90%;
     --ring: 210 100% 56%;
     --radius: 0.75rem;
+    --overlay: 0 0% 0%;
   }
 
   .dark {
-    --background: 222 47% 7%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 10%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 10%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 7%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
+    --background: 240 5% 12%;
+    --foreground: 0 0% 98%;
+    --card: 240 5% 16%;
+    --card-foreground: 0 0% 98%;
+    --card-hover: 240 5% 20%;
+    --popover: 240 5% 16%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 210 100% 54%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 5% 18%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 5% 18%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 5% 18%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 217 33% 17%;
-    --input: 217 33% 17%;
-    --ring: 217 91% 60%;
+    --border: 240 5% 24%;
+    --border-subtle: 240 5% 20%;
+    --input: 240 5% 24%;
+    --ring: 210 100% 54%;
+    --overlay: 0 0% 0%;
   }
 }
 
@@ -66,15 +72,67 @@
 html {
   @apply font-sans antialiased;
   overscroll-behavior: none;
-  background-color: #000000;
+  background-color: hsl(var(--background));
 }
 
 body {
-  @apply m-0 p-0 text-sm;
-  background-color: #000000;
+  @apply m-0 p-0 text-base;
+  background-color: hsl(var(--background));
   color: hsl(var(--foreground));
 }
 
 ::-webkit-scrollbar {
   display: none;
+}
+
+/* 备份动画 */
+@keyframes backup-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes progress-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-backup-slide-in {
+  animation: backup-slide-in 0.25s ease-out forwards;
+}
+
+.animate-progress-pulse {
+  animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+/* 错误提示进度条动画 */
+@keyframes shrink {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
 }

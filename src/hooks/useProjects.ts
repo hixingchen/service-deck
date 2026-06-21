@@ -1,14 +1,14 @@
 import { useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { Project, Service } from "../types";
+import { projectsApi, processApi } from "../lib/api";
 
-export function useProjects() {
+export function useProjects(refreshRunningServices?: () => Promise<void>) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runningProjects, setRunningProjects] = useState<string[]>([]);
 
   const loadProjects = useCallback(async () => {
     try {
-      const p = await invoke<Project[]>("get_projects");
+      const p = await projectsApi.getAll();
       setProjects(p);
     } catch (e) {
       console.error("加载项目失败:", e);
@@ -16,61 +16,59 @@ export function useProjects() {
   }, []);
 
   const addProject = useCallback(async (name: string, services: Service[]) => {
-    const project = await invoke<{ id: string }>("add_project", { name });
+    const project = await projectsApi.add(name);
     for (const svc of services) {
-      await invoke("add_service_to_project", { projectId: project.id, serviceId: svc.id });
+      await projectsApi.addService(project.id, svc.id);
     }
     await loadProjects();
     return project;
   }, [loadProjects]);
 
   const updateProject = useCallback(async (id: string, name: string, favorite?: boolean) => {
-    await invoke("update_project", { id, name, favorite: favorite ?? null });
+    await projectsApi.update(id, name, favorite);
     await loadProjects();
   }, [loadProjects]);
 
   const removeProject = useCallback(async (id: string) => {
-    await invoke("remove_project", { id });
+    await projectsApi.remove(id);
     await loadProjects();
-  }, [loadProjects]);
+    // 删除项目后刷新服务运行状态（共享服务可能仍在运行）
+    if (refreshRunningServices) {
+      await refreshRunningServices();
+    }
+  }, [loadProjects, refreshRunningServices]);
 
   const toggleFavorite = useCallback(async (id: string) => {
-    const result = await invoke<boolean>("toggle_project_favorite", { id });
+    const result = await projectsApi.toggleFavorite(id);
     await loadProjects();
     return result;
   }, [loadProjects]);
 
   const startProject = useCallback(async (projectId: string) => {
-    const started = await invoke<string[]>("start_project", { projectId });
+    const started = await processApi.startProject(projectId);
     setRunningProjects(prev => prev.includes(projectId) ? prev : [...prev, projectId]);
     return started;
   }, []);
 
   const stopProject = useCallback(async (projectId: string) => {
-    const stopped = await invoke<string[]>("stop_project", { projectId });
+    const stopped = await processApi.stopProject(projectId);
     setRunningProjects(prev => prev.filter(id => id !== projectId));
     return stopped;
   }, []);
 
   const restartProject = useCallback(async (projectId: string) => {
-    const result = await invoke<string[]>("restart_project", { projectId });
-    // 重启后项目应该在运行中
+    const result = await processApi.restartProject(projectId);
     setRunningProjects(prev => prev.includes(projectId) ? prev : [...prev, projectId]);
     return result;
   }, []);
 
-  const updateProjectSort = useCallback(async (updates: [string, number][]) => {
-    await invoke("update_project_sort", { updates });
-    await loadProjects();
-  }, [loadProjects]);
-
   const addServiceToProject = useCallback(async (projectId: string, serviceId: string) => {
-    await invoke("add_service_to_project", { projectId, serviceId });
+    await projectsApi.addService(projectId, serviceId);
     await loadProjects();
   }, [loadProjects]);
 
   const removeServiceFromProject = useCallback(async (projectId: string, serviceId: string) => {
-    await invoke("remove_service_from_project", { projectId, serviceId });
+    await projectsApi.removeService(projectId, serviceId);
     await loadProjects();
   }, [loadProjects]);
 
@@ -78,8 +76,6 @@ export function useProjects() {
     projects,
     setProjects,
     runningProjects,
-    setRunningProjects,
-    loadProjects,
     addProject,
     updateProject,
     removeProject,
@@ -87,7 +83,6 @@ export function useProjects() {
     startProject,
     stopProject,
     restartProject,
-    updateProjectSort,
     addServiceToProject,
     removeServiceFromProject,
   };

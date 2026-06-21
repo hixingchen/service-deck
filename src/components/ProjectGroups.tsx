@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Star } from "lucide-react";
 import type { Project } from "../types";
+import { useI18n } from "../hooks/useI18n";
 
 interface ProjectGroupsProps {
   projects: Project[];
@@ -11,21 +12,19 @@ export function ProjectGroups({
   projects,
   children,
 }: ProjectGroupsProps) {
-  // 收藏项目
+  const { t } = useI18n();
   const favorites = useMemo(() => projects.filter(p => p.favorite), [projects]);
-  // 其他项目
   const others = useMemo(() => projects.filter(p => !p.favorite), [projects]);
 
   return (
     <div className="space-y-4">
-      {/* 收藏项目 */}
       {favorites.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-2 px-2 py-1.5">
             <Star className="w-4 h-4 text-yellow-400" />
-            <span className="text-[13px] font-medium text-gray-400">收藏</span>
-            <span className="text-[11px] text-gray-600 ml-auto">
-              {favorites.length} 个项目
+            <span className="text-sm font-medium text-gray-400">{t.project.favorites}</span>
+            <span className="text-sm text-gray-600 ml-auto">
+              {t.project.projectCount.replace("{count}", String(favorites.length))}
             </span>
           </div>
           <div className="space-y-2 pl-2">
@@ -34,14 +33,13 @@ export function ProjectGroups({
         </div>
       )}
 
-      {/* 其他项目 */}
       {others.length > 0 && (
         <div className="space-y-2">
           {favorites.length > 0 && (
             <div className="flex items-center gap-2 px-2 py-1.5">
-              <span className="text-[13px] font-medium text-gray-400">全部项目</span>
-              <span className="text-[11px] text-gray-600 ml-auto">
-                {others.length} 个项目
+              <span className="text-sm font-medium text-gray-400">{t.project.allProjects}</span>
+              <span className="text-sm text-gray-600 ml-auto">
+                {t.project.projectCount.replace("{count}", String(others.length))}
               </span>
             </div>
           )}

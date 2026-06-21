@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { Service } from "../types";
+import { servicesApi, processApi } from "../lib/api";
 
 export function useServices() {
   const [services, setServices] = useState<Service[]>([]);
@@ -9,8 +9,8 @@ export function useServices() {
   const loadServices = useCallback(async () => {
     try {
       const [s, r] = await Promise.all([
-        invoke<Service[]>("get_services"),
-        invoke<string[]>("get_running_services"),
+        servicesApi.getAll(),
+        processApi.getRunning(),
       ]);
       setServices(s);
       setRunningServices(r);
@@ -23,10 +23,8 @@ export function useServices() {
     name: string;
     command: string;
     path: string;
-    serviceType: string;
-    logPath: string;
   }) => {
-    await invoke("add_service", { ...params, envVars: {} });
+    await servicesApi.add({ ...params });
     await loadServices();
   }, [loadServices]);
 
@@ -35,40 +33,46 @@ export function useServices() {
     name: string;
     command: string;
     path: string;
-    serviceType: string;
-    logPath: string;
+    watch_mode?: string;
+    watch_path?: string;
+    watch_include?: string[];
+    watch_exclude?: string[];
   }) => {
-    await invoke("update_service", { ...params, envVars: {} });
+    await servicesApi.update({
+      id: params.id,
+      name: params.name,
+      command: params.command,
+      path: params.path,
+      watchMode: params.watch_mode || undefined,
+      watchPath: params.watch_path || undefined,
+      watchInclude: params.watch_include || undefined,
+      watchExclude: params.watch_exclude || undefined,
+    });
     await loadServices();
   }, [loadServices]);
 
   const deleteService = useCallback(async (id: string) => {
-    await invoke("delete_service", { id });
+    await servicesApi.delete(id);
     await loadServices();
   }, [loadServices]);
 
   const startService = useCallback(async (serviceName: string, command?: string) => {
-    await invoke("start_service", { serviceName, command: command || null });
+    await processApi.startService(serviceName, command);
     await loadServices();
   }, [loadServices]);
 
   const stopService = useCallback(async (serviceName: string) => {
-    await invoke("stop_service", { serviceName });
+    await processApi.stopService(serviceName);
     await loadServices();
   }, [loadServices]);
 
   const restartService = useCallback(async (serviceName: string) => {
-    await invoke("restart_service", { serviceName });
-    await loadServices();
-  }, [loadServices]);
-
-  const updateServiceSort = useCallback(async (updates: [string, number][]) => {
-    await invoke("update_service_sort", { updates });
+    await processApi.restartService(serviceName);
     await loadServices();
   }, [loadServices]);
 
   const toggleFavorite = useCallback(async (id: string) => {
-    const result = await invoke<boolean>("toggle_service_favorite", { id });
+    const result = await servicesApi.toggleFavorite(id);
     await loadServices();
     return result;
   }, [loadServices]);
@@ -78,14 +82,12 @@ export function useServices() {
     setServices,
     runningServices,
     setRunningServices,
-    loadServices,
     addService,
     updateService,
     deleteService,
     startService,
     stopService,
     restartService,
-    updateServiceSort,
-    toggleFavorite: toggleFavorite,
+    toggleFavorite,
   };
 }

@@ -7,8 +7,8 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { invoke } from "@tauri-apps/api/core";
 import type { Service, Project } from "../types";
+import { servicesApi, projectsApi } from "../lib/api";
 
 export function useDnD(
   sortedServices: Service[],
@@ -31,10 +31,10 @@ export function useDnD(
     if (oldIndex === -1 || newIndex === -1) return;
 
     const reordered = arrayMove(sortedProjects, oldIndex, newIndex);
-    const updates = reordered.map((p, i) => [p.id, i] as [string, number]);
+    const updates: [string, number][] = reordered.map((p, i) => [p.id, i]);
 
     try {
-      await invoke("update_project_sort", { updates });
+      await projectsApi.updateSort(updates);
       await loadData();
     } catch (e) {
       console.error("更新排序失败:", e);
@@ -51,10 +51,10 @@ export function useDnD(
     if (oldIndex === -1 || newIndex === -1) return;
 
     const reordered = arrayMove(sortedServices, oldIndex, newIndex);
-    const updates = reordered.map((s, i) => [s.id, i] as [string, number]);
+    const updates: [string, number][] = reordered.map((s, i) => [s.id, i]);
 
     try {
-      await invoke("update_service_sort", { updates });
+      await servicesApi.updateSort(updates);
       await loadData();
     } catch (e) {
       console.error("更新服务排序失败:", e);

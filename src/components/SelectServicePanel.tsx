@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ArrowLeft, X, Plus, Wrench, Star } from "lucide-react";
 import type { Service } from "../types";
+import { useI18n } from "../hooks/useI18n";
 
 interface Props {
   services: Service[];
@@ -12,17 +13,17 @@ function ServiceItem({ service, onSelect }: { service: Service; onSelect: (id: s
   return (
     <div
       onClick={() => onSelect(service.id)}
-      className="flex items-center gap-3 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-emerald-500/30 hover:bg-emerald-500/[0.04] cursor-pointer transition-all duration-200 group"
+      className="flex items-center gap-3 p-4 rounded-xl border border-border bg-card hover:border-emerald-500/30 hover:bg-emerald-500/[0.04] cursor-pointer transition-all duration-200 group"
     >
       <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-300">
         <Wrench className="w-5 h-5 text-emerald-400" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-[14px] font-medium text-white/90">{service.name}</span>
+          <span className="text-base font-medium text-foreground">{service.name}</span>
           {service.favorite && <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
         </div>
-        <div className="text-[12px] text-gray-500 truncate font-mono mt-0.5">{service.command}</div>
+        <div className="text-sm text-muted-foreground truncate font-mono mt-0.5">{service.command}</div>
       </div>
       <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity">
         <Plus className="w-4 h-4" />
@@ -32,6 +33,7 @@ function ServiceItem({ service, onSelect }: { service: Service; onSelect: (id: s
 }
 
 export function SelectServicePanel({ services, onSelect, onClose }: Props) {
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
 
   // 收藏服务优先排序
@@ -58,14 +60,14 @@ export function SelectServicePanel({ services, onSelect, onClose }: Props) {
   const noResults = search.trim() && filteredFavorites.length === 0 && filteredOthers.length === 0;
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-[#0a0a0f]">
-      <div className="flex-shrink-0 flex items-center h-14 px-4 border-b border-white/[0.06]">
+    <div className="absolute inset-0 z-50 flex flex-col bg-background">
+      <div className="flex-shrink-0 flex items-center h-14 px-4 border-b border-border">
         <button onClick={onClose}
-          className="h-9 w-9 flex items-center justify-center rounded-lg border border-white/[0.08] hover:bg-white/[0.06] transition-colors"
+          className="h-9 w-9 flex items-center justify-center rounded-lg border border-border hover:bg-card-hover transition-colors"
         >
-          <ArrowLeft className="w-4 h-4 text-gray-400" />
+          <ArrowLeft className="w-4 h-4 text-muted-foreground" />
         </button>
-        <h2 className="ml-3 text-[15px] font-semibold text-white/90">选择服务</h2>
+        <h2 className="ml-3 text-base font-semibold text-foreground">{t.selectService.title}</h2>
       </div>
 
       {/* 搜索框 */}
@@ -75,14 +77,14 @@ export function SelectServicePanel({ services, onSelect, onClose }: Props) {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索服务名称..."
-            className="w-full h-9 px-3 pl-9 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+            placeholder={t.selectService.searchPlaceholder}
+            className="w-full h-9 px-3 pl-9 rounded-lg bg-card border border-border text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-blue-500/50 transition-colors"
           />
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           {search && (
-            <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+            <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -92,15 +94,15 @@ export function SelectServicePanel({ services, onSelect, onClose }: Props) {
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {services.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-3">
-              <Wrench className="w-8 h-8 text-gray-600" />
+            <div className="w-16 h-16 rounded-2xl bg-card border border-border flex items-center justify-center mb-3">
+              <Wrench className="w-8 h-8 text-muted-foreground" />
             </div>
-            <p className="text-[14px] text-gray-400 font-medium">没有可用的服务</p>
-            <p className="text-[12px] text-gray-600 mt-1">请先在服务列表中添加服务</p>
+            <p className="text-base text-muted-foreground font-medium">{t.selectService.noAvailable}</p>
+            <p className="text-sm text-muted-foreground mt-1">{t.selectService.noAvailableHint}</p>
           </div>
         ) : noResults ? (
           <div className="flex flex-col items-center justify-center h-full">
-            <p className="text-[13px] text-gray-600">未找到匹配的服务</p>
+            <p className="text-sm text-muted-foreground">{t.selectService.noResults}</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -109,8 +111,8 @@ export function SelectServicePanel({ services, onSelect, onClose }: Props) {
               <div>
                 <div className="flex items-center gap-2 mb-2 px-1">
                   <Star className="w-3.5 h-3.5 text-yellow-400" />
-                  <h3 className="text-[13px] font-semibold text-gray-400">收藏</h3>
-                  <span className="text-[11px] text-gray-600">({filteredFavorites.length})</span>
+                  <h3 className="text-sm font-semibold text-muted-foreground">{t.selectService.favorites}</h3>
+                  <span className="text-sm text-muted-foreground">({filteredFavorites.length})</span>
                 </div>
                 <div className="space-y-2">
                   {filteredFavorites.map((service) => <ServiceItem key={service.id} service={service} onSelect={onSelect} />)}
@@ -123,8 +125,8 @@ export function SelectServicePanel({ services, onSelect, onClose }: Props) {
               <div>
                 {filteredFavorites.length > 0 && (
                   <div className="flex items-center gap-2 mb-2 px-1">
-                    <h3 className="text-[13px] font-semibold text-gray-400">全部服务</h3>
-                    <span className="text-[11px] text-gray-600">({filteredOthers.length})</span>
+                    <h3 className="text-sm font-semibold text-muted-foreground">{t.selectService.allServices}</h3>
+                    <span className="text-sm text-muted-foreground">({filteredOthers.length})</span>
                   </div>
                 )}
                 <div className="space-y-2">

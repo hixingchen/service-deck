@@ -1,3 +1,8 @@
+# Claude Code
+CLAUDE.md
+TASK.md
+release-notes*.md
+
 # Logs
 logs
 *.log
@@ -19,6 +24,7 @@ dist-ssr
 # OS
 .DS_Store
 Thumbs.db
+test.icns
 
 # Rust
 src-tauri/target
@@ -28,4 +34,4 @@ src-tauri/WixTools
 src-tauri/gen
 
 # Dev notes
-TASKS.md
+docs

@@ -16,9 +16,9 @@ export function ActionButton({
   disabled = false,
 }: ActionButtonProps) {
   const variantClasses = {
-    default: "text-gray-500 hover:text-white hover:bg-white/[0.08]",
-    danger: "text-gray-500 hover:text-red-400 hover:bg-red-500/10",
-    success: "text-gray-500 hover:text-emerald-400 hover:bg-emerald-500/10",
+    default: "text-muted-foreground hover:text-foreground hover:bg-card-hover",
+    danger: "text-muted-foreground hover:text-red-400 hover:bg-red-500/10",
+    success: "text-muted-foreground hover:text-emerald-400 hover:bg-emerald-500/10",
   };
 
   return (
@@ -26,7 +26,7 @@ export function ActionButton({
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${variantClasses[variant]} ${
+      className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors ${variantClasses[variant]} ${
         disabled ? "opacity-50 cursor-not-allowed" : ""
       }`}
     >

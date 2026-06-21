@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
@@ -25,6 +25,16 @@
       #splash-screen.fade-out {
         opacity: 0;
         pointer-events: none;
+      }
+
+      /* 加载界面的顶部拖拽区域 */
+      .splash-drag-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 32px;
+        -webkit-app-region: drag;
       }
 
       .splash-logo {
@@ -60,16 +70,17 @@
       }
     </style>
   </head>
-  <body class="dark">
+  <body>
     <!-- 启动Loading遮罩 -->
     <div id="splash-screen">
+      <div class="splash-drag-bar"></div>
       <svg class="splash-logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="hsl(217, 91%, 60%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M2 17L12 22L22 17" stroke="hsl(217, 91%, 60%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M2 12L12 17L22 12" stroke="hsl(217, 91%, 60%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <div class="splash-spinner"></div>
-      <div class="splash-text">正在加载 Service Deck...</div>
+      <div class="splash-text">Loading Service Deck...</div>
     </div>
 
     <div id="root"></div>

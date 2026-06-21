@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Play, Square, RotateCw, Loader2 } from "lucide-react";
 import type { Service } from "../types";
+import { useI18n } from "../hooks/useI18n";
 
 interface BatchOperationsProps {
   services: Service[];
@@ -19,162 +20,113 @@ export function BatchOperations({
   onRestartSelected,
   onClose,
 }: BatchOperationsProps) {
+  const { t } = useI18n();
   const [selectedServices, setSelectedServices] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
 
-  const toggleService = (serviceName: string) => {
+  const toggleService = (name: string) => {
     setSelectedServices(prev => {
       const next = new Set(prev);
-      if (next.has(serviceName)) {
-        next.delete(serviceName);
-      } else {
-        next.add(serviceName);
-      }
+      next.has(name) ? next.delete(name) : next.add(name);
       return next;
     });
   };
 
-  const selectAll = () => {
-    setSelectedServices(new Set(services.map(s => s.name)));
-  };
+  const selectAll    = () => setSelectedServices(new Set(services.map(s => s.name)));
+  const selectNone   = () => setSelectedServices(new Set());
+  const selectRunning = () => setSelectedServices(new Set(services.filter(s => runningServices.includes(s.name)).map(s => s.name)));
+  const selectStopped = () => setSelectedServices(new Set(services.filter(s => !runningServices.includes(s.name)).map(s => s.name)));
 
-  const selectNone = () => {
-    setSelectedServices(new Set());
-  };
-
-  const selectRunning = () => {
-    setSelectedServices(new Set(services.filter(s => runningServices.includes(s.name)).map(s => s.name)));
-  };
-
-  const selectStopped = () => {
-    setSelectedServices(new Set(services.filter(s => !runningServices.includes(s.name)).map(s => s.name)));
-  };
-
-  const handleStartSelected = async () => {
-    const selected = Array.from(selectedServices);
-    if (selected.length === 0) return;
+  const act = async (fn: (names: string[]) => Promise<void>) => {
+    const names = Array.from(selectedServices);
+    if (names.length === 0) return;
     setLoading(true);
-    try {
-      await onStartSelected(selected);
-      onClose();
-    } catch (e) {
-      console.error("批量启动失败:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStopSelected = async () => {
-    const selected = Array.from(selectedServices);
-    if (selected.length === 0) return;
-    setLoading(true);
-    try {
-      await onStopSelected(selected);
-      onClose();
-    } catch (e) {
-      console.error("批量停止失败:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRestartSelected = async () => {
-    const selected = Array.from(selectedServices);
-    if (selected.length === 0 || !onRestartSelected) return;
-    setLoading(true);
-    try {
-      await onRestartSelected(selected);
-      onClose();
-    } catch (e) {
-      console.error("批量重启失败:", e);
-    } finally {
-      setLoading(false);
-    }
+    try { await fn(names); onClose(); }
+    catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      {/* 背景遮罩 */}
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      {/* 对话框 */}
-      <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-[#1a1a2e] border border-white/[0.1] shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
+      <div className="relative w-full max-w-lg mx-4 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
         {/* 头部 */}
-        <div className="flex items-center justify-between px-4 h-12 border-b border-white/[0.06] flex-shrink-0">
-          <h3 className="text-[15px] font-semibold text-white/90">批量操作</h3>
-          <button
-            onClick={onClose}
-            className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-white/[0.06] transition-colors"
-          >
-            ×
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/50">
+          <h3 className="text-base font-semibold text-foreground">{t.batch.title}</h3>
+          <button onClick={onClose}
+            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+            ✕
           </button>
         </div>
 
         {/* 快速选择 */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.06] flex-shrink-0">
-          <button onClick={selectAll} className="text-[11px] text-blue-400 hover:text-blue-300">全选</button>
-          <button onClick={selectNone} className="text-[11px] text-gray-500 hover:text-gray-400">取消全选</button>
-          <button onClick={selectRunning} className="text-[11px] text-emerald-400 hover:text-emerald-300">选择运行中</button>
-          <button onClick={selectStopped} className="text-[11px] text-orange-400 hover:text-orange-300">选择已停止</button>
-          <span className="text-[11px] text-gray-600 ml-auto">已选 {selectedServices.size} 个</span>
+        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border/50 text-sm">
+          <button onClick={selectAll} className="text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t.batch.selectAll}</button>
+          <button onClick={selectNone} className="text-muted-foreground hover:text-foreground transition-colors">{t.batch.deselectAll}</button>
+          <button onClick={selectRunning} className="text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors">{t.batch.selectRunning}</button>
+          <button onClick={selectStopped} className="text-amber-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors">{t.batch.selectStopped}</button>
+          <span className="text-muted-foreground ml-auto">{t.batch.selectedCount.replace("{count}", String(selectedServices.size))}</span>
         </div>
 
         {/* 服务列表 */}
         <div className="flex-1 overflow-auto p-4">
-          <div className="space-y-2">
-            {services.map(service => (
-              <label
-                key={service.id}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.04] cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedServices.has(service.name)}
-                  onChange={() => toggleService(service.name)}
-                  className="w-4 h-4 rounded border-white/20 bg-white/[0.04] text-blue-500 focus:ring-blue-500/50"
-                />
-                <div className="flex-1">
-                  <div className="text-[13px] text-white/90">{service.name}</div>
-                  <div className="text-[11px] text-gray-500">{service.command}</div>
+          <div className="space-y-1.5">
+            {services.map(service => {
+              const running = runningServices.includes(service.name);
+              const checked = selectedServices.has(service.name);
+              return (
+                <div
+                  key={service.id}
+                  onClick={() => toggleService(service.name)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all duration-200
+                    ${checked ? "bg-blue-500/10 border border-blue-500/40 ring-1 ring-blue-500/20" : "bg-card border border-border hover:bg-card-hover hover:border-border-subtle"}`}
+                >
+                  <span className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 border transition-all duration-200 cursor-pointer ${
+                    checked
+                      ? "bg-blue-500 border-blue-500"
+                      : "bg-background border-border hover:border-foreground/30"
+                  }`}>
+                    {checked && (
+                      <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-foreground">{service.name}</div>
+                    <div className="text-sm text-muted-foreground font-mono mt-0.5 truncate">{service.command}</div>
+                  </div>
+                  <span className={`flex-shrink-0 px-2 py-0.5 rounded-md text-xs font-medium ${
+                    running
+                      ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                      : "text-muted-foreground bg-muted"
+                  }`}>
+                    {running ? t.service.status.running : t.service.status.stopped}
+                  </span>
                 </div>
-                <span className={`text-[11px] px-2 py-0.5 rounded ${
-                  runningServices.includes(service.name)
-                    ? "text-emerald-400 bg-emerald-500/15"
-                    : "text-gray-500 bg-white/[0.04]"
-                }`}>
-                  {runningServices.includes(service.name) ? "运行中" : "已停止"}
-                </span>
-              </label>
-            ))}
+              );
+            })}
           </div>
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-white/[0.06] flex-shrink-0">
-          <button
-            onClick={handleStartSelected}
-            disabled={selectedServices.size === 0 || loading}
-            className="flex-1 h-9 px-4 rounded-lg bg-emerald-600 text-white text-[13px] font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
+        <div className="flex items-center gap-2 px-5 py-3.5 border-t border-border/50">
+          <button onClick={() => act(onStartSelected)} disabled={selectedServices.size === 0 || loading}
+            className="flex-1 h-9 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-500 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            启动选中
+            {t.batch.start}
           </button>
-          <button
-            onClick={handleStopSelected}
-            disabled={selectedServices.size === 0 || loading}
-            className="flex-1 h-9 px-4 rounded-lg bg-red-600 text-white text-[13px] font-medium hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
+          <button onClick={() => act(onStopSelected)} disabled={selectedServices.size === 0 || loading}
+            className="flex-1 h-9 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
-            停止选中
+            {t.batch.stop}
           </button>
           {onRestartSelected && (
-            <button
-              onClick={handleRestartSelected}
-              disabled={selectedServices.size === 0 || loading}
-              className="flex-1 h-9 px-4 rounded-lg bg-blue-600 text-white text-[13px] font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
+            <button onClick={() => act(onRestartSelected)} disabled={selectedServices.size === 0 || loading}
+              className="flex-1 h-9 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
               {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCw className="w-3.5 h-3.5" />}
-              重启选中
+              {t.batch.restart}
             </button>
           )}
         </div>

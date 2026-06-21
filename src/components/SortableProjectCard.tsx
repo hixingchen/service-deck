@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Play, Square, Edit3, Trash2, Star, ChevronDown, ChevronRight, FolderOpen, RotateCw, Rocket, FileText, Terminal } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { GripVertical, Play, Square, Edit3, Trash2, Star, ChevronDown, ChevronRight, FolderOpen, RotateCw, Rocket, ScrollText, Terminal } from "lucide-react";
+import { terminalApi } from "../lib/api/terminal";
 import type { Project, Service } from "../types";
 import { ActionButton } from "./ActionButton";
 import { ServiceStatusDot } from "./ServiceStatusDot";
 import { CommandTerminal } from "./CommandTerminal";
+import { useI18n } from "../hooks/useI18n";
 
 interface SortableProjectCardProps {
   project: Project;
@@ -48,6 +49,7 @@ export function SortableProjectCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: project.id });
   const [loadingService, setLoadingService] = useState<string | null>(null);
   const [terminalService, setTerminalService] = useState<Service | null>(null);
+  const { t } = useI18n();
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -77,7 +79,7 @@ export function SortableProjectCard({
 
   const handleOpenDirectory = async (path: string) => {
     try {
-      await invoke("open_directory", { path });
+      await terminalApi.openDirectory(path);
     } catch (e) {
       console.error("打开目录失败:", e);
     }
@@ -86,21 +88,21 @@ export function SortableProjectCard({
   return (
     <div ref={setNodeRef} style={style}>
       <div
-        className={`group rounded-xl border overflow-hidden ${
+        className={`group rounded-xl overflow-hidden ${
           isDragging
-            ? "bg-[#1a1a2e] border-blue-500/50 shadow-[0_16px_48px_rgba(0,0,0,0.5),0_0_0_1px_rgba(59,130,246,0.4)] ring-2 ring-blue-500/20"
-            : "bg-white/[0.02] hover:bg-white/[0.04] border-white/[0.06] hover:border-white/[0.1] transition-all duration-200"
+            ? "bg-[#1a1a2e] border border-blue-500/50 shadow-[0_16px_48px_rgba(0,0,0,0.5),0_0_0_1px_rgba(59,130,246,0.4)] ring-2 ring-blue-500/20"
+            : "bg-card border border-border hover:bg-card-hover hover:border-border-subtle transition-all duration-200"
         }`}
       >
         {/* 主卡片行 */}
-        <div className="flex items-center gap-3 px-3 py-2.5">
+        <div className="flex items-center gap-3 px-3 py-3">
           {/* 拖拽手柄 */}
           <div
             {...attributes}
             {...listeners}
-            className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-gray-600 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity"
+            className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity"
           >
-            <GripVertical className="w-3.5 h-3.5" />
+            <GripVertical className="w-4 h-4" />
           </div>
 
           {/* 图标 */}
@@ -114,26 +116,26 @@ export function SortableProjectCard({
             onClick={() => project.services.length > 0 && onToggleExpand()}
           >
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium text-white/90 truncate">
+              <span className="text-sm font-medium text-foreground truncate">
                 {project.name}
               </span>
               {project.favorite && (
                 <Star className="w-3 h-3 text-yellow-400 fill-yellow-400 flex-shrink-0" />
               )}
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">
-                {project.services.length} 个服务
+              <span className="px-1.5 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400">
+                {t.project.serviceCount.replace("{count}", String(project.services.length))}
               </span>
               {isProjectRunning && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400">
-                  运行中 {runningServices.filter(name => project.services.some(s => s.name === name)).length}/{project.services.length}
+                <span className="px-1.5 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400">
+                  {t.project.runningCount.replace("{running}", String(runningServices.filter(name => project.services.some(s => s.name === name)).length)).replace("{total}", String(project.services.length))}
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-gray-600 truncate mt-0.5">
+            <div className="text-sm text-muted-foreground truncate mt-0.5">
               {project.services.length > 0 ? (
                 project.services.map(s => s.name).join(" · ")
               ) : (
-                "暂无服务"
+                t.project.noServices
               )}
             </div>
           </div>
@@ -142,7 +144,7 @@ export function SortableProjectCard({
           {project.services.length > 0 && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
-              className="flex-shrink-0 p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/[0.06] transition-colors"
+              className="flex-shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-card-hover transition-colors"
             >
               {expanded ? (
                 <ChevronDown className="w-4 h-4" />
@@ -157,38 +159,38 @@ export function SortableProjectCard({
             <ActionButton
               icon={<Star className={`w-3.5 h-3.5 ${project.favorite ? "fill-yellow-400 text-yellow-400" : ""}`} />}
               onClick={onToggleFavorite}
-              title={project.favorite ? "取消收藏" : "收藏"}
+              title={project.favorite ? t.service.action.unfavorite : t.service.action.favorite}
             />
             {project.services.length > 0 && (
               <>
                 <ActionButton
-                  icon={<Play className="w-3.5 h-3.5" />}
+                  icon={<Play className="w-4 h-4" />}
                   onClick={onStart}
-                  title="启动项目"
+                  title={t.project.action.start}
                   variant="success"
                 />
                 <ActionButton
-                  icon={<Square className="w-3.5 h-3.5" />}
+                  icon={<Square className="w-4 h-4" />}
                   onClick={onStop}
-                  title="停止项目"
+                  title={t.project.action.stop}
                   variant="danger"
                 />
                 <ActionButton
-                  icon={<RotateCw className="w-3.5 h-3.5" />}
+                  icon={<RotateCw className="w-4 h-4" />}
                   onClick={onRestart}
-                  title="重启项目"
+                  title={t.project.action.restart}
                 />
               </>
             )}
             <ActionButton
-              icon={<Edit3 className="w-3.5 h-3.5" />}
+              icon={<Edit3 className="w-4 h-4" />}
               onClick={onEdit}
-              title="编辑"
+              title={t.common.edit}
             />
             <ActionButton
-              icon={<Trash2 className="w-3.5 h-3.5" />}
+              icon={<Trash2 className="w-4 h-4" />}
               onClick={handleDelete}
-              title="删除"
+              title={t.common.delete}
               variant="danger"
             />
           </div>
@@ -196,63 +198,61 @@ export function SortableProjectCard({
 
         {/* 展开的服务列表 */}
         {expanded && project.services.length > 0 && (
-          <div className="px-3 pb-3 pt-1 border-t border-white/[0.04]">
+          <div className="px-3 pb-3 pt-1.5">
             <div className="space-y-1">
               {project.services.map(service => {
                 const svcRunning = runningServices.includes(service.name);
                 return (
                   <div
                     key={service.id}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                      svcRunning ? "bg-emerald-500/[0.05]" : "bg-white/[0.02]"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                      svcRunning ? "bg-emerald-500/[0.05]" : "bg-card"
                     }`}
                   >
                     <ServiceStatusDot running={svcRunning} />
-                    <span className={`text-[13px] flex-1 ${
-                      svcRunning ? "text-emerald-300" : "text-gray-400"
+                    <span className={`text-sm flex-1 ${
+                      svcRunning ? "text-emerald-300" : "text-muted-foreground"
                     }`}>
                       {service.name}
                     </span>
                     <div className="flex items-center gap-1">
                       <ActionButton
-                        icon={<FolderOpen className="w-3 h-3" />}
+                        icon={<FolderOpen className="w-3.5 h-3.5" />}
                         onClick={() => handleOpenDirectory(service.path)}
-                        title="打开目录"
+                        title={t.service.action.openDir}
                         disabled={loadingService === service.name}
                       />
                       <ActionButton
-                        icon={<FileText className="w-3 h-3" />}
+                        icon={<ScrollText className="w-3.5 h-3.5" />}
                         onClick={() => onViewLogs(service.name)}
-                        title="查看日志"
+                        title={t.service.action.viewLogs}
                       />
-                      {(service.service_type === "npm" || service.service_type === "maven") && (
-                        <ActionButton
-                          icon={<Terminal className="w-3 h-3" />}
-                          onClick={() => setTerminalService(service)}
-                          title="命令终端"
-                        />
-                      )}
+                      <ActionButton
+                        icon={<Terminal className="w-3.5 h-3.5" />}
+                        onClick={() => setTerminalService(service)}
+                        title={t.service.action.terminal}
+                      />
                       {svcRunning ? (
                         <>
                           <ActionButton
-                            icon={<RotateCw className="w-3 h-3" />}
+                            icon={<RotateCw className="w-3.5 h-3.5" />}
                             onClick={() => handleServiceAction(service.name, () => onRestartService(service.name))}
-                            title="重启"
+                            title={t.service.action.restart}
                             disabled={loadingService === service.name}
                           />
                           <ActionButton
-                            icon={<Square className="w-3 h-3" />}
+                            icon={<Square className="w-3.5 h-3.5" />}
                             onClick={() => handleServiceAction(service.name, () => onStopService(service.name))}
-                            title="停止"
+                            title={t.service.action.stop}
                             variant="danger"
                             disabled={loadingService === service.name}
                           />
                         </>
                       ) : (
                         <ActionButton
-                          icon={<Play className="w-3 h-3" />}
+                          icon={<Play className="w-3.5 h-3.5" />}
                           onClick={() => handleServiceAction(service.name, () => onStartService(service.name))}
-                          title="启动"
+                          title={t.service.action.start}
                           variant="success"
                           disabled={loadingService === service.name}
                         />
@@ -271,7 +271,6 @@ export function SortableProjectCard({
         <CommandTerminal
           serviceName={terminalService.name}
           servicePath={terminalService.path}
-          serviceType={terminalService.service_type || "normal"}
           onClose={() => setTerminalService(null)}
         />
       )}

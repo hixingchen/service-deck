@@ -15,7 +15,25 @@ tauri-build = { version = "2", features = [] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
 uuid = { version = "1", features = ["v4"] }
+dirs-next = "2"
+notify = "7.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1", features = ["rt"] }
+chrono = { version = "0.4", features = ["serde"] }
+ctrlc = "3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[target.'cfg(not(windows))'.dependencies]
+libc = "0.2"

@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Plus, FolderOpen, Wrench, X, Layers, HardDrive, MoreHorizontal, Star, Settings } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { Plus, FolderOpen, Wrench, X, Layers, Star, Settings2, ArrowLeft, Server, FolderKanban, AlertCircle, CheckCircle } from "lucide-react";
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
@@ -14,7 +14,6 @@ import { ServiceFormModal } from "./components/ServiceFormModal";
 import { ProjectFormModal } from "./components/ProjectFormModal";
 import { LogViewerPanel } from "./components/LogViewerPanel";
 import { BatchOperations } from "./components/BatchOperations";
-import { BackupRestorePanel } from "./components/BackupRestorePanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 
 import {
@@ -24,20 +23,24 @@ import {
   useDnD,
   useServiceForm,
   useProjectForm,
-  useBackup,
   useConfirm,
+  useI18n,
 } from "./hooks";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { WatchConfirmToast } from "./components/WatchConfirmToast";
+import { processApi, configApi, projectsApi, settingsApi } from "./lib/api";
+import { applyTheme } from "./lib/theme";
 
 function App() {
   // 视图状态
   const [view, setView] = useState<View>("projects");
   const [showBatchOps, setShowBatchOps] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [serviceSearch, setServiceSearch] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const { t } = useI18n();
 
   // 使用自定义 hooks
   const {
@@ -54,6 +57,16 @@ function App() {
     toggleFavorite: toggleServiceFavorite,
   } = useServices();
 
+  // 刷新服务运行状态（用于删除项目后同步共享服务状态）
+  const refreshRunningServices = useCallback(async () => {
+    try {
+      const r = await processApi.getRunning();
+      setRunningServices(r);
+    } catch (e) {
+      console.error("刷新运行状态失败:", e);
+    }
+  }, [setRunningServices]);
+
   const {
     projects,
     setProjects,
@@ -67,7 +80,7 @@ function App() {
     restartProject,
     addServiceToProject,
     removeServiceFromProject,
-  } = useProjects();
+  } = useProjects(refreshRunningServices);
 
   const { logService, logContent, viewLogs, closeLogViewer } = useLogs();
 
@@ -75,12 +88,22 @@ function App() {
   const projectForm = useProjectForm();
   const { options: confirmOptions, confirm, handleConfirm, handleCancel } = useConfirm();
 
-  // 功能扩展 hooks
-  const { backing, restoring, lastBackup, createBackup, restoreBackup } = useBackup();
-  const [showBackupRestore, setShowBackupRestore] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
-  const [configPath, setConfigPath] = useState("");
+  const [configDir, setConfigDir] = useState("");
+  const [defaultConfigDir, setDefaultConfigDir] = useState("");
+
+  // 文件监听确认提示状态（支持多个服务同时显示）
+  const [watchEvents, setWatchEvents] = useState<Array<{
+    serviceName: string;
+    changedFiles: string[];
+    timestamp: number;
+  }>>([]);
+
+  // 记录进入设置前的视图，用于返回
+  const previousView = useRef<View>("projects");
+
+  // 防抖：记录每个服务最后一次提示的时间
+  const lastWatchEventRef = useRef<Record<string, number>>({});
 
   // 错误提示 5 秒后自动消失
   useEffect(() => {
@@ -89,19 +112,78 @@ function App() {
     return () => clearTimeout(timer);
   }, [globalError]);
 
+  // Toast 提示 3 秒后自动消失
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  // 监听文件变化事件（confirm 模式）
+  useEffect(() => {
+    const unlisten = listen<{
+      service_name: string;
+      paths: string[];
+      auto_restart: boolean;
+    }>("watch:event", (event) => {
+      // 只处理 confirm 模式（auto_restart = false）
+      if (!event.payload.auto_restart) {
+        const now = Date.now();
+        const lastTime = lastWatchEventRef.current[event.payload.service_name] || 0;
+
+        // 防抖：同一个服务 3 秒内不重复提示
+        if (now - lastTime < 3000) {
+          return;
+        }
+
+        lastWatchEventRef.current[event.payload.service_name] = now;
+
+        setWatchEvents((prev) => {
+          // 如果该服务已有提示，更新它
+          const existing = prev.findIndex((e) => e.serviceName === event.payload.service_name);
+          if (existing >= 0) {
+            const updated = [...prev];
+            updated[existing] = {
+              serviceName: event.payload.service_name,
+              changedFiles: event.payload.paths,
+              timestamp: now,
+            };
+            return updated;
+          }
+          // 否则添加新提示
+          return [
+            ...prev,
+            {
+              serviceName: event.payload.service_name,
+              changedFiles: event.payload.paths,
+              timestamp: now,
+            },
+          ];
+        });
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // 加载所有数据
   const loadData = useCallback(async () => {
     try {
       const [s, p, r, c] = await Promise.all([
-        invoke<import("./types").Service[]>("get_services"),
-        invoke<import("./types").Project[]>("get_projects"),
-        invoke<string[]>("get_running_services"),
-        invoke<string>("get_config_file_path").catch(() => ""),
+        import("./lib/api").then(m => m.servicesApi.getAll()),
+        import("./lib/api").then(m => m.projectsApi.getAll()),
+        processApi.getRunning(),
+        configApi.getConfigDir().catch(() => ["", ""] as [string, string]),
       ]);
       setServices(s);
       setProjects(p);
       setRunningServices(r);
-      if (c) setConfigPath(c);
+      if (c && c[0]) {
+        setConfigDir(c[0]);
+        setDefaultConfigDir(c[1]);
+      }
     } catch (e) {
       console.error("加载数据失败:", e);
     } finally {
@@ -114,14 +196,22 @@ function App() {
     loadData();
   }, [loadData]);
 
+  // 启动时加载并应用主题
+  useEffect(() => {
+    settingsApi.get().then(s => applyTheme(s.theme)).catch(() => applyTheme("dark"));
+  }, []);
+
   // 定时轮询运行状态（无运行服务时降低频率）
+  const runningCountRef = useRef(0);
+  runningCountRef.current = runningServices.length;
+
   useEffect(() => {
     let active = true;
 
     const poll = async () => {
       if (!active) return;
       try {
-        const r = await invoke<string[]>("get_running_services");
+        const r = await processApi.getRunning();
         if (!active) return;
         setRunningServices(r);
       } catch (e) {
@@ -129,8 +219,7 @@ function App() {
       }
     };
 
-    // 有运行服务时 2 秒轮询，否则 10 秒
-    const getInterval = () => runningServices.length > 0 ? 2000 : 10000;
+    const getInterval = () => runningCountRef.current > 0 ? 2000 : 10000;
 
     let timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
@@ -140,14 +229,13 @@ function App() {
       }, getInterval());
     };
 
-    // 首次立即轮询
     poll().then(() => schedule());
 
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [setRunningServices, runningServices.length]);
+  }, [setRunningServices]);
 
   // 排序后的列表（收藏优先）
   const sortedProjects = useMemo(() => {
@@ -209,7 +297,7 @@ function App() {
 
   // 服务操作
   const handleAddService = async () => {
-    const { serviceName, serviceCommand, servicePath, serviceType, serviceLogPath } = serviceForm;
+    const { serviceName, serviceCommand, servicePath } = serviceForm;
     if (!serviceName.trim() || !serviceCommand.trim() || !servicePath.trim()) return;
 
     try {
@@ -217,34 +305,36 @@ function App() {
         name: serviceName.trim(),
         command: serviceCommand.trim(),
         path: servicePath.trim(),
-        serviceType,
-        logPath: serviceLogPath.trim(),
       });
       serviceForm.closeForm();
     } catch (e) {
       console.error("添加服务失败:", e);
-      setGlobalError(`添加服务失败: ${e}`);
+      setGlobalError(`Failed to add service: ${e}`);
     }
   };
 
   const handleUpdateService = async () => {
-    const { editingService, serviceName, serviceCommand, servicePath, serviceType, serviceLogPath } = serviceForm;
+    const { editingService, serviceName, serviceCommand, servicePath, watchMode, watchPath, watchInclude, watchExclude } = serviceForm;
     if (!editingService) return;
     if (!serviceName.trim() || !serviceCommand.trim() || !servicePath.trim()) return;
 
+    const params = {
+      id: editingService.id,
+      name: serviceName.trim(),
+      command: serviceCommand.trim(),
+      path: servicePath.trim(),
+      watch_mode: watchMode,
+      watch_path: watchPath || servicePath.trim(),
+      watch_include: watchInclude,
+      watch_exclude: watchExclude,
+    };
+
     try {
-      await updateService({
-        id: editingService.id,
-        name: serviceName.trim(),
-        command: serviceCommand.trim(),
-        path: servicePath.trim(),
-        serviceType,
-        logPath: serviceLogPath.trim(),
-      });
+      await updateService(params);
       serviceForm.closeForm();
     } catch (e) {
       console.error("更新服务失败:", e);
-      setGlobalError(`更新服务失败: ${e}`);
+      setGlobalError(`Failed to update service: ${e}`);
     }
   };
 
@@ -257,7 +347,7 @@ function App() {
       projectForm.closeForm();
     } catch (e) {
       console.error("添加项目失败:", e);
-      setGlobalError(`添加项目失败: ${e}`);
+      setGlobalError(`Failed to add project: ${e}`);
     }
   };
 
@@ -269,7 +359,7 @@ function App() {
       projectForm.closeForm();
     } catch (e) {
       console.error("更新项目失败:", e);
-      setGlobalError(`更新项目失败: ${e}`);
+      setGlobalError(`Failed to update project: ${e}`);
     }
   };
 
@@ -279,7 +369,7 @@ function App() {
     try {
       await addServiceToProject(projectForm.editingProject.id, serviceId);
       // 更新编辑中的项目
-      const updatedProjects = await invoke<import("./types").Project[]>("get_projects");
+      const updatedProjects = await projectsApi.getAll();
       setProjects(updatedProjects);
       const updated = updatedProjects.find((p) => p.id === projectForm.editingProject!.id);
       if (updated) projectForm.setEditingProject(updated);
@@ -294,7 +384,7 @@ function App() {
     try {
       await removeServiceFromProject(projectForm.editingProject.id, serviceId);
       // 更新编辑中的项目
-      const updatedProjects = await invoke<import("./types").Project[]>("get_projects");
+      const updatedProjects = await projectsApi.getAll();
       setProjects(updatedProjects);
       const updated = updatedProjects.find((p) => p.id === projectForm.editingProject!.id);
       if (updated) projectForm.setEditingProject(updated);
@@ -306,10 +396,10 @@ function App() {
   // 批量操作（带通知）
   const handleBatchStart = async (serviceNames: string[]) => {
     try {
-      await invoke("batch_start_services", { serviceNames });
+      await processApi.batchStart(serviceNames);
       loadData();
     } catch (e) {
-      const msg = `批量启动失败: ${e}`;
+      const msg = `${t.toast.batchStartFailed}: ${e}`;
       console.error(msg);
       setGlobalError(msg);
     }
@@ -317,10 +407,10 @@ function App() {
 
   const handleBatchStop = async (serviceNames: string[]) => {
     try {
-      await invoke("batch_stop_services", { serviceNames });
+      await processApi.batchStop(serviceNames);
       loadData();
     } catch (e) {
-      const msg = `批量停止失败: ${e}`;
+      const msg = `${t.toast.batchStopFailed}: ${e}`;
       console.error(msg);
       setGlobalError(msg);
     }
@@ -328,109 +418,119 @@ function App() {
 
   const handleBatchRestart = async (serviceNames: string[]) => {
     try {
-      await invoke("batch_stop_services", { serviceNames });
-      await invoke("batch_start_services", { serviceNames });
+      await processApi.batchStop(serviceNames);
+      await processApi.batchStart(serviceNames);
       loadData();
     } catch (e) {
-      const msg = `批量重启失败: ${e}`;
+      const msg = `${t.toast.batchRestartFailed}: ${e}`;
       console.error(msg);
       setGlobalError(msg);
     }
   };
 
   return (
-    <div className="h-screen flex flex-col bg-[#0a0a0f] overflow-hidden">
+    <div className="h-screen flex flex-col bg-background overflow-hidden">
       <TitleBar />
 
       {/* 工具栏 */}
-      <div className="flex-shrink-0 flex items-center justify-between px-4 h-12 border-b border-white/[0.06] bg-[#0a0a0f]">
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-white/[0.03]">
-          <button
-            onClick={() => setView("services")}
-            className={`px-3 py-1.5 rounded-md text-[13px] font-medium transition-all duration-200 ${
-              view === "services"
-                ? "bg-white/[0.1] text-white shadow-sm"
-                : "text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            服务列表
-          </button>
-          <button
-            onClick={() => setView("projects")}
-            className={`px-3 py-1.5 rounded-md text-[13px] font-medium transition-all duration-200 ${
-              view === "projects"
-                ? "bg-white/[0.1] text-white shadow-sm"
-                : "text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            项目列表
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          {view === "projects" ? (
-            <button
-              onClick={() => projectForm.openAddForm()}
-              className="h-8 px-3 flex items-center gap-1.5 rounded-lg bg-blue-600 text-white text-[13px] font-medium hover:bg-blue-500 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              添加项目
-            </button>
-          ) : (
+      <div className="flex-shrink-0 flex items-center justify-between px-4 h-14 bg-background">
+        {/* 左侧 */}
+        <div className="flex items-center gap-2 min-w-[120px]">
+          {view === "settings" ? (
             <>
               <button
-                onClick={() => serviceForm.openAddForm()}
-                className="h-8 px-3 flex items-center gap-1.5 rounded-lg bg-blue-600 text-white text-[13px] font-medium hover:bg-blue-500 transition-colors"
+                onClick={() => setView(previousView.current || "projects")}
+                className="h-9 w-9 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-card-hover transition-colors"
               >
-                <Plus className="w-4 h-4" />
-                添加服务
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2">
+                <Settings2 className="w-5 h-5 text-blue-400" />
+                <span className="text-base font-semibold text-foreground">{t.nav.settings}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted/80">
+              <button
+                onClick={() => setView("services")}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm transition-all duration-200 ${
+                  view === "services"
+                    ? "bg-background text-foreground font-semibold shadow-md ring-1 ring-border"
+                    : "text-muted-foreground font-medium hover:text-foreground"
+                }`}
+              >
+                <Server className="w-3.5 h-3.5" />
+                {t.nav.services}
               </button>
               <button
-                onClick={() => setShowBatchOps(true)}
-                className="h-8 px-3 flex items-center gap-1.5 rounded-lg border border-white/[0.08] text-gray-500 hover:text-white hover:bg-white/[0.06] transition-colors text-[12px]"
-                title="批量操作"
+                onClick={() => setView("projects")}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm transition-all duration-200 ${
+                  view === "projects"
+                    ? "bg-background text-foreground font-semibold shadow-md ring-1 ring-border"
+                    : "text-muted-foreground font-medium hover:text-foreground"
+                }`}
               >
-                <Layers className="w-3.5 h-3.5" />
-                批量操作
+                <FolderKanban className="w-3.5 h-3.5" />
+                {t.nav.projects}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 右侧 */}
+        <div className="flex items-center gap-2 min-w-[120px] justify-end">
+          {view === "settings" ? (
+            <div />
+          ) : (
+            <>
+              {view === "projects" ? (
+                <button
+                  onClick={() => projectForm.openAddForm()}
+                  className="h-9 px-3 flex items-center gap-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t.nav.addProject}
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => serviceForm.openAddForm()}
+                    className="h-9 px-3 flex items-center gap-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    {t.nav.addService}
+                  </button>
+                  <button
+                    onClick={() => setShowBatchOps(true)}
+                    className="h-9 px-3 flex items-center gap-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-card-hover transition-colors text-sm"
+                    title={t.nav.batchOps}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    {t.nav.batchOps}
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => { previousView.current = view; setView("settings"); }}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-card-hover transition-colors"
+                title={t.nav.settings}
+              >
+                <Settings2 className="w-4 h-4" />
               </button>
             </>
           )}
-          {/* 更多功能下拉菜单 */}
-          <div className="relative">
-            <button
-              onClick={() => setShowMoreMenu(!showMoreMenu)}
-              className="h-8 w-8 flex items-center justify-center rounded-lg border border-white/[0.08] text-gray-500 hover:text-white hover:bg-white/[0.06] transition-colors"
-              title="更多功能"
-            >
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
-            {showMoreMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
-                <div className="absolute right-0 top-10 z-50 w-48 py-1 rounded-xl bg-[#1a1a2e] border border-white/[0.1] shadow-xl">
-                  <button
-                    onClick={() => { setShowBackupRestore(true); setShowMoreMenu(false); }}
-                    className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
-                  >
-                    <HardDrive className="w-4 h-4" />
-                    备份恢复
-                  </button>
-                  <button
-                    onClick={() => { setShowSettings(true); setShowMoreMenu(false); }}
-                    className="w-full px-3 py-2 text-left text-[13px] text-gray-400 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
-                  >
-                    <Settings className="w-4 h-4" />
-                    环境配置
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </div>
 
       {/* 内容区域 */}
-      <main className="flex-1 p-4 overflow-auto">
-        {isLoading ? (
+      <main className="flex-1 overflow-auto p-4">
+        {view === "settings" ? (
+          <SettingsPanel
+            configDir={configDir}
+            defaultConfigDir={defaultConfigDir}
+            onConfigDirChange={setConfigDir}
+          />
+        ) : isLoading ? (
           <div className="flex items-center justify-center h-full">
             <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
           </div>
@@ -438,8 +538,8 @@ function App() {
           sortedProjects.length === 0 && projectSearch === "" ? (
             <EmptyState
               icon={<FolderOpen className="w-12 h-12" />}
-              title="暂无项目"
-              subtitle="点击「添加项目」开始管理"
+              title={t.empty.noProjects}
+              subtitle={t.empty.noProjectsHint}
             />
           ) : (
             <DndContext
@@ -454,11 +554,11 @@ function App() {
                     type="text"
                     value={projectSearch}
                     onChange={(e) => setProjectSearch(e.target.value)}
-                    placeholder="搜索项目名称..."
-                    className="w-full h-9 px-3 pl-9 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                    placeholder={t.project.searchPlaceholder}
+                    className="w-full h-10 px-3 pl-9 rounded-lg bg-card border border-border text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-blue-500/50 transition-colors"
                   />
                   <svg
-                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -473,7 +573,7 @@ function App() {
                   {projectSearch && (
                     <button
                       onClick={() => setProjectSearch("")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -506,9 +606,9 @@ function App() {
                         onStopService={(name) => stopService(name).catch(e => setGlobalError(String(e)))}
                         onRestartService={(name) => restartService(name).catch(e => setGlobalError(String(e)))}
                         onConfirmDelete={() => confirm({
-                          title: "删除项目",
-                          message: `确定要删除项目 "${project.name}" 吗？此操作不可撤销。`,
-                          confirmLabel: "删除",
+                          title: t.project.deleteConfirm.title,
+                          message: t.project.deleteConfirm.message.replace("{name}", project.name),
+                          confirmLabel: t.common.delete,
                           variant: "danger",
                         })}
                       />
@@ -518,8 +618,8 @@ function App() {
 
                 {/* 搜索无结果 */}
                 {projectSearch && filteredProjects.length === 0 && (
-                  <div className="text-center py-8 text-gray-600 text-[13px]">
-                    未找到匹配的项目
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    {t.project.noMatch}
                   </div>
                 )}
               </div>
@@ -528,8 +628,8 @@ function App() {
         ) : sortedServices.length === 0 && serviceSearch === "" ? (
           <EmptyState
             icon={<Wrench className="w-12 h-12" />}
-            title="暂无服务"
-            subtitle="点击「添加服务」开始管理"
+            title={t.empty.noServices}
+            subtitle={t.empty.noServicesHint}
           />
         ) : (
           <DndContext
@@ -544,11 +644,11 @@ function App() {
                   type="text"
                   value={serviceSearch}
                   onChange={(e) => setServiceSearch(e.target.value)}
-                  placeholder="搜索服务名称..."
-                  className="w-full h-9 px-3 pl-9 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white/90 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                  placeholder={t.selectService.searchPlaceholder}
+                  className="w-full h-10 px-3 pl-9 rounded-lg bg-card border border-border text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-blue-500/50 transition-colors"
                 />
                 <svg
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -563,7 +663,7 @@ function App() {
                 {serviceSearch && (
                   <button
                     onClick={() => setServiceSearch("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -575,10 +675,10 @@ function App() {
                 <div>
                   <div className="flex items-center gap-2 mb-2 px-1">
                     <Star className="w-3.5 h-3.5 text-yellow-400" />
-                    <h3 className="text-[13px] font-semibold text-gray-400">
-                      收藏
+                    <h3 className="text-sm font-semibold text-muted-foreground">
+                      {t.selectService.favorites}
                     </h3>
-                    <span className="text-[11px] text-gray-600">
+                    <span className="text-sm text-muted-foreground">
                       ({favoriteServices.length})
                     </span>
                   </div>
@@ -601,9 +701,9 @@ function App() {
                           onViewLogs={() => viewLogs(service.name)}
                           onToggleFavorite={() => toggleServiceFavorite(service.id)}
                           onConfirmDelete={() => confirm({
-                            title: "删除服务",
-                            message: `确定要删除服务 "${service.name}" 吗？此操作不可撤销。`,
-                            confirmLabel: "删除",
+                            title: t.service.deleteConfirm.title,
+                            message: t.service.deleteConfirm.message.replace("{name}", service.name),
+                            confirmLabel: t.common.delete,
                             variant: "danger",
                           })}
                         />
@@ -618,10 +718,10 @@ function App() {
                 <div>
                   {favoriteServices.length > 0 && (
                     <div className="flex items-center gap-2 mb-2 px-1">
-                      <h3 className="text-[13px] font-semibold text-gray-400">
-                        全部服务
+                      <h3 className="text-sm font-semibold text-muted-foreground">
+                        {t.selectService.allServices}
                       </h3>
-                      <span className="text-[11px] text-gray-600">
+                      <span className="text-sm text-muted-foreground">
                         ({otherServices.length})
                       </span>
                     </div>
@@ -645,9 +745,9 @@ function App() {
                           onViewLogs={() => viewLogs(service.name)}
                           onToggleFavorite={() => toggleServiceFavorite(service.id)}
                           onConfirmDelete={() => confirm({
-                            title: "删除服务",
-                            message: `确定要删除服务 "${service.name}" 吗？此操作不可撤销。`,
-                            confirmLabel: "删除",
+                            title: t.service.deleteConfirm.title,
+                            message: t.service.deleteConfirm.message.replace("{name}", service.name),
+                            confirmLabel: t.common.delete,
                             variant: "danger",
                           })}
                         />
@@ -660,8 +760,8 @@ function App() {
               {/* 搜索无结果 */}
               {serviceSearch &&
                 filteredServices.length === 0 && (
-                  <div className="text-center py-8 text-gray-600 text-[13px]">
-                    未找到匹配的服务
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    {t.selectService.noResults}
                   </div>
                 )}
             </div>
@@ -672,43 +772,51 @@ function App() {
       {/* 弹窗 */}
       {serviceForm.showAddService && (
         <ServiceFormModal
-          title="添加服务"
+          title={t.service.form.title.add}
           name={serviceForm.serviceName}
           command={serviceForm.serviceCommand}
           path={serviceForm.servicePath}
-          serviceType={serviceForm.serviceType}
-          logPath={serviceForm.serviceLogPath}
+          watchMode={serviceForm.watchMode}
+          watchPath={serviceForm.watchPath}
+          watchInclude={serviceForm.watchInclude}
+          watchExclude={serviceForm.watchExclude}
           onNameChange={serviceForm.setServiceName}
           onCommandChange={serviceForm.setServiceCommand}
           onPathChange={serviceForm.setServicePath}
-          onServiceTypeChange={serviceForm.setServiceType}
-          onLogPathChange={serviceForm.setServiceLogPath}
+          onWatchModeChange={serviceForm.setWatchMode}
+          onWatchPathChange={serviceForm.setWatchPath}
+          onWatchIncludeChange={serviceForm.setWatchInclude}
+          onWatchExcludeChange={serviceForm.setWatchExclude}
           onClose={serviceForm.closeForm}
           onSubmit={handleAddService}
-          submitLabel="添加"
+          submitLabel={t.common.add}
         />
       )}
       {serviceForm.editingService && (
         <ServiceFormModal
-          title="编辑服务"
+          title={t.service.form.title.edit}
           name={serviceForm.serviceName}
           command={serviceForm.serviceCommand}
           path={serviceForm.servicePath}
-          serviceType={serviceForm.serviceType}
-          logPath={serviceForm.serviceLogPath}
+          watchMode={serviceForm.watchMode}
+          watchPath={serviceForm.watchPath}
+          watchInclude={serviceForm.watchInclude}
+          watchExclude={serviceForm.watchExclude}
           onNameChange={serviceForm.setServiceName}
           onCommandChange={serviceForm.setServiceCommand}
           onPathChange={serviceForm.setServicePath}
-          onServiceTypeChange={serviceForm.setServiceType}
-          onLogPathChange={serviceForm.setServiceLogPath}
+          onWatchModeChange={serviceForm.setWatchMode}
+          onWatchPathChange={serviceForm.setWatchPath}
+          onWatchIncludeChange={serviceForm.setWatchInclude}
+          onWatchExcludeChange={serviceForm.setWatchExclude}
           onClose={serviceForm.closeForm}
           onSubmit={handleUpdateService}
-          submitLabel="保存"
+          submitLabel={t.common.save}
         />
       )}
       {projectForm.showAddProject && (
         <ProjectFormModal
-          title="添加项目"
+          title={t.project.form.title.add}
           name={projectForm.projectName}
           projectServices={projectForm.newProjectServices}
           allServices={services}
@@ -720,12 +828,12 @@ function App() {
             if (svc) projectForm.addService(svc);
           }}
           onRemoveService={projectForm.removeService}
-          submitLabel="添加"
+          submitLabel={t.common.add}
         />
       )}
       {projectForm.editingProject && (
         <ProjectFormModal
-          title="编辑项目"
+          title={t.project.form.title.edit}
           name={projectForm.projectName}
           projectServices={projectForm.editingProject.services}
           allServices={services}
@@ -734,7 +842,7 @@ function App() {
           onSubmit={handleUpdateProject}
           onAddService={handleAddServiceToProject}
           onRemoveService={handleRemoveServiceFromProject}
-          submitLabel="保存"
+          submitLabel={t.common.save}
         />
       )}
 
@@ -763,41 +871,37 @@ function App() {
         />
       )}
 
-      {/* 环境配置面板 */}
-      {showSettings && (
-        <SettingsPanel
-          onClose={() => setShowSettings(false)}
-        />
-      )}
-
-      {/* 备份恢复面板 */}
-      {showBackupRestore && (
-        <BackupRestorePanel
-          backing={backing}
-          restoring={restoring}
-          lastBackup={lastBackup}
-          configPath={configPath}
-          onClose={() => setShowBackupRestore(false)}
-          onBackup={createBackup}
-          onRestore={restoreBackup}
-          onRefresh={loadData}
-        />
-      )}
-
       {/* 全局错误提示 */}
-      {globalError && (
-        <div className="fixed bottom-4 right-4 z-[200] max-w-md animate-in slide-in-from-bottom-5">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/90 backdrop-blur-sm text-white shadow-lg">
-            <div className="flex-1 text-[13px]">{globalError}</div>
+      <div className={`fixed top-12 left-1/2 -translate-x-1/2 z-[200] transition-all duration-300 ease-out ${globalError ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+        {globalError && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/30 text-sm text-red-400 shadow-lg">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="flex-1">{globalError}</span>
             <button
               onClick={() => setGlobalError(null)}
-              className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/20 transition-colors"
+              className="flex-shrink-0 hover:bg-red-500/20 rounded p-0.5 transition-colors"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3 h-3" />
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      {/* Toast 提示 */}
+      <div className={`fixed top-12 left-1/2 -translate-x-1/2 z-[200] transition-all duration-300 ease-out ${toast ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+        {toast && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-sm text-emerald-400 shadow-lg">
+            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="flex-1">{toast}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="flex-shrink-0 hover:bg-emerald-500/20 rounded p-0.5 transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* 确认对话框 */}
       {confirmOptions && (
@@ -811,6 +915,22 @@ function App() {
           onCancel={handleCancel}
         />
       )}
+
+      {/* 文件监听确认提示（右下角，支持多个） */}
+      <WatchConfirmToast
+        events={watchEvents}
+        onConfirm={async (serviceName) => {
+          try {
+            await restartService(serviceName);
+          } catch (e) {
+            setGlobalError(`Failed to restart service: ${e}`);
+          }
+          setWatchEvents((prev) => prev.filter((e) => e.serviceName !== serviceName));
+        }}
+        onDismiss={(serviceName) => {
+          setWatchEvents((prev) => prev.filter((e) => e.serviceName !== serviceName));
+        }}
+      />
     </div>
   );
 }
