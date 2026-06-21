@@ -105,7 +105,7 @@ pub fn stop_watcher(
     Ok(())
 }
 
-/// 启动文件监听器
+/// 启动文件监听器（幂等：同名 watcher 已存在时会先停止旧的）
 pub fn start_watcher(
     app_handle: AppHandle,
     service_name: String,
@@ -116,6 +116,13 @@ pub fn start_watcher(
 ) -> Result<(), String> {
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::sync::mpsc;
+
+    // 幂等保护：先停止同名旧 watcher，避免线程泄漏
+    if let Some(state) = app_handle.try_state::<AppState>() {
+        stop_watcher(&state.watch_stop_signals, &service_name)?;
+        // 短暂等待旧线程退出，避免新旧 watcher 并存
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = RecommendedWatcher::new(

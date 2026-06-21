@@ -182,6 +182,10 @@ UI 组件 → 自定义 Hooks → IPC 封装层 → Tauri IPC → Rust Command �
 - 敏感环境变量标记并排除日志输出
 - 单实例约束 — 防止重复启动
 
+## 代码签名
+
+本项目使用 [SignPath Foundation](https://signpath.org/) 进行代码签名。签名证书由 [SignPath.io](https://signpath.io) 为开源项目免费提供。
+
 ## 许可证
 
 [MIT](LICENSE)

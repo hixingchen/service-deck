@@ -182,6 +182,10 @@ UI Components → Custom Hooks → IPC Wrapper → Tauri IPC → Rust Command �
 - Sensitive environment variables marked and excluded from logs
 - Single-instance enforcement — prevents duplicate processes
 
+## Code Signing
+
+This project uses [SignPath Foundation](https://signpath.org/) for code signing. The signing certificate is provided by the [SignPath.io](https://signpath.io) free program for open source projects.
+
 ## License
 
 [MIT](LICENSE)

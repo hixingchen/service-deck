@@ -205,6 +205,17 @@ pub fn start_project(app: AppHandle, state: State<AppState>, project_id: String)
                 log_info!("process", "项目服务启动成功: {} (PID: {})", global_svc.name, child.id());
                 lock!(state.processes).insert(global_svc.name.clone(), child);
                 started.push(global_svc.name.clone());
+
+                // 自动启动文件监听
+                if global_svc.watch_mode != crate::WatchMode::Off {
+                    let watch_path = if global_svc.watch_path.is_empty() { global_svc.path.clone() } else { global_svc.watch_path.clone() };
+                    let auto = global_svc.watch_mode == crate::WatchMode::Auto;
+                    log_info!("process", "启动文件监听: {} (路径: {}, 自动重启: {})", global_svc.name, watch_path, auto);
+                    let _ = crate::services::file_watcher::start_watcher(
+                        app.clone(), global_svc.name.clone(), watch_path,
+                        global_svc.watch_include.clone(), global_svc.watch_exclude.clone(), auto,
+                    );
+                }
             }
             Err(e) => {
                 log_error!("process", "项目服务启动失败: {} - {}", global_svc.name, e);
@@ -315,6 +326,17 @@ pub fn batch_start_services(app: AppHandle, state: State<AppState>, service_name
                 log_info!("process", "批量启动成功: {} (PID: {})", name, child.id());
                 lock!(state.processes).insert(name.clone(), child);
                 started.push(name.clone());
+
+                // 自动启动文件监听
+                if service.watch_mode != crate::WatchMode::Off {
+                    let watch_path = if service.watch_path.is_empty() { service.path.clone() } else { service.watch_path.clone() };
+                    let auto = service.watch_mode == crate::WatchMode::Auto;
+                    log_info!("process", "启动文件监听: {} (路径: {}, 自动重启: {})", name, watch_path, auto);
+                    let _ = crate::services::file_watcher::start_watcher(
+                        app.clone(), name.clone(), watch_path,
+                        service.watch_include.clone(), service.watch_exclude.clone(), auto,
+                    );
+                }
             }
             Err(e) => {
                 log_error!("process", "批量启动失败: {} - {}", name, e);

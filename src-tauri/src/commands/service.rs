@@ -160,7 +160,11 @@ pub fn delete_service(state: State<AppState>, id: String) -> Result<(), String> 
             viewers.remove(&service.name);
         }
         if let Ok(mut signals) = state.watch_stop_signals.lock() {
-            signals.remove(&service.name);
+            if let Some(signal) = signals.remove(&service.name) {
+                if let Ok(mut should_stop) = signal.lock() {
+                    *should_stop = true;
+                }
+            }
         }
 
         dao::services::delete(conn, &id)?;
