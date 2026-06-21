@@ -2,12 +2,12 @@
 
 # Service Deck
 
-**A local development environment manager — start all your project services with one click**
+**A local service management tool**
 
 [English](README.md) | [中文](README_CN.md)
 
-[![version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/hixingchen/service-deck/releases)
-[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/hixingchen/service-deck/releases)
+[![version](https://img.shields.io/github/v/release/hixingchen/service-deck)](https://github.com/hixingchen/service-deck/releases)
+[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)](https://github.com/hixingchen/service-deck/releases)
 [![built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 

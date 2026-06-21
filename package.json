@@ -1,6 +1,6 @@
 {
   "name": "service-deck",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "服务管理工具 - 管理和监控本地服务",
   "type": "module",
   "scripts": {

@@ -2,12 +2,12 @@
 
 # Service Deck
 
-**本地开发环境管理工具 — 一键启动项目所需的所有服务**
+**本地服务管理工具**
 
 [English](README.md) | [中文](README_CN.md)
 
-[![version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/hixingchen/service-deck/releases)
-[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/hixingchen/service-deck/releases)
+[![version](https://img.shields.io/github/v/release/hixingchen/service-deck)](https://github.com/hixingchen/service-deck/releases)
+[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)](https://github.com/hixingchen/service-deck/releases)
 [![built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
